@@ -13,9 +13,10 @@ fn decode_bencoded_value(mut encoded_value: &str) -> (Value, usize) {
         'l' => {
             let mut list = Vec::new();
             let mut total_len = 2; // counting symbols 'l' and 'e'
-            encoded_value = encoded_value.strip_prefix('l').unwrap().strip_suffix('e').unwrap();
+            encoded_value = encoded_value.strip_prefix('l').unwrap();
             loop {
                 if encoded_value.is_empty() {break}
+                if encoded_value.starts_with('e') {break}
                 let (list_part, len) = decode_bencoded_value(encoded_value);
                 total_len += len;
                 list.push(list_part.clone());
