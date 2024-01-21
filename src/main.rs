@@ -37,7 +37,6 @@ fn decode_bencoded_value(mut encoded_value: &str) -> (Value, usize) {
             let mut total_len = 2;
             loop {
                 if encoded_value.is_empty() || encoded_value.starts_with('e') {
-                    println!("fnjd");
                     break;
                 }
                 let (key, key_len) = decode_bencoded_value(encoded_value);
