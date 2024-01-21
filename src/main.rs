@@ -42,7 +42,7 @@ fn decode_bencoded_value(mut encoded_value: &str) -> (Value, usize) {
                 let (key, key_len) = decode_bencoded_value(encoded_value);
                 let (value, val_len) = decode_bencoded_value(&encoded_value[key_len..]);
                 total_len += val_len + key_len;
-                dict.insert(key.to_string(), value);
+                dict.insert(key.as_str().unwrap().to_owned(), value);
                 encoded_value = &encoded_value[val_len + key_len..];
             }
             return (dict.into(), total_len);
