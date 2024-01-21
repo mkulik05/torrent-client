@@ -15,11 +15,11 @@ fn decode_bencoded_value(mut encoded_value: &str) -> (Value, usize) {
             let mut total_len = 0;
             encoded_value = encoded_value.strip_prefix('l').unwrap().strip_suffix('e').unwrap();
             loop {
+                if encoded_value.is_empty() {break}
                 let (list_part, len) = decode_bencoded_value(encoded_value);
                 total_len += len;
                 list.push(list_part.clone());
                 encoded_value = &encoded_value[len..];
-                if encoded_value.is_empty() {break}
             }
             return(Value::Array(list), total_len);
                         
