@@ -10,7 +10,7 @@ fn decode_bencoded_value(encoded_value: &str) -> Value {
         let string = &encoded_value[colon_index + 1..colon_index + 1 + number as usize];
         return Value::String(string.to_string());
     } else if encoded_value.starts_with('i') && encoded_value.ends_with('e') {
-        let int_res = encoded_value[1..encoded_value.len() - 1].parse::<i32>();
+        let int_res = encoded_value[1..encoded_value.len() - 1].parse::<i64>();
         if let Ok(n) = int_res {
             return n.into()
         }
