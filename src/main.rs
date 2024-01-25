@@ -1,3 +1,4 @@
+use reqwest::Client;
 use serde::Serialize;
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
@@ -203,7 +204,15 @@ fn decode_bencoded_value(mut encoded_value: &[u8]) -> (BencodeValue, usize) {
     )
 }
 
-fn main() {
+fn parse_torrent_file(path: &str) -> BencodeValue {
+    let mut torrent_file = File::open(path).unwrap();
+    let mut bytes = Vec::new();
+    torrent_file.read_to_end(&mut bytes).unwrap();
+    decode_bencoded_value(&bytes).0
+}
+
+#[tokio::main]
+async fn main() {
     let args: Vec<String> = env::args().collect();
     let command = &args[1];
 
@@ -214,30 +223,78 @@ fn main() {
             println!("{}", decoded_value.to_string());
         }
         "info" => {
-            let mut torrent_file = File::open(&args[2]).unwrap();
-            let mut bytes = Vec::new();
-            torrent_file.read_to_end(&mut bytes).unwrap();
-            let metainfo = decode_bencoded_value(&bytes).0;
+            let metainfo = parse_torrent_file(&args[2]);
             let mut hasher = Sha1::new();
-
             let mut bytes: Vec<u8> = Vec::new();
             metainfo["info"].encode(&mut bytes);
             hasher.update(bytes);
-            let result = hasher.finalize();
-            let BencodeValue::Bytes(ref byte_pieces) = metainfo["info"]["pieces"] else {panic!("ERROR")};
+            let info_hash = hasher.finalize();
+            let BencodeValue::Bytes(ref byte_pieces) = metainfo["info"]["pieces"] else {
+                panic!("ERROR")
+            };
             let mut hashes = Vec::new();
             let n = byte_pieces.len() / 20;
             for i in 0..n {
-                hashes.push(hex::encode(&byte_pieces[i * 20..(i + 1)*20]));
+                hashes.push(hex::encode(&byte_pieces[i * 20..(i + 1) * 20]));
             }
             println!(
                 "Tracker URL: {}\nLength: {}\nInfo Hash: {}\nPiece Length: {}\nPiece Hashes:\n{}",
                 metainfo["announce"].to_lossy_string(),
                 metainfo["info"]["length"].to_string(),
-                hex::encode(result),
+                hex::encode(info_hash),
                 metainfo["info"]["piece length"].to_string(),
                 hashes.join("\n")
             );
+        }
+        "peers" => {
+            let metainfo = parse_torrent_file(&args[2]);
+            let mut hasher = Sha1::new();
+            let mut bytes: Vec<u8> = Vec::new();
+            metainfo["info"].encode(&mut bytes);
+            hasher.update(bytes);
+            let info_hash = hasher.finalize();
+            let url_encoded_hash: String =
+                info_hash.iter().map(|b| format!("%{:02x}", b)).collect();
+            let url = format!(
+                "{}?info_hash={}",
+                metainfo["announce"].to_lossy_string(),
+                url_encoded_hash.as_str()
+            );
+            let params = &[
+                ("peer_id", "00112233445566770099"),
+                ("port", "6881"),
+                ("uploaded", "0"),
+                ("downloaded", "0"),
+                ("left", &metainfo["info"]["length"].to_string()),
+                ("compact", "1"),
+            ];
+            let client = Client::new();
+            let body = client
+                .get(url)
+                .query(params)
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+            let response = decode_bencoded_value(&body).0;
+            let BencodeValue::Bytes(ref peers_bytes) = response["peers"] else {
+                panic!("Error")
+            };
+            let peers_n = peers_bytes.len() / 6;
+            let mut ips_str = Vec::new();
+            for i in 0..peers_n {
+                ips_str.push(format!(
+                    "{}.{}.{}.{}:{}",
+                    peers_bytes[i * 6],
+                    peers_bytes[i * 6 + 1],
+                    peers_bytes[i * 6 + 2],
+                    peers_bytes[i * 6 + 3],
+                    u16::from_be_bytes([peers_bytes[i * 6 + 4], peers_bytes[i * 6 + 5]])
+                ))
+            }
+            println!("{}", ips_str.join("\n"));
         }
         _ => println!("unknown command: {}", args[1]),
     }
