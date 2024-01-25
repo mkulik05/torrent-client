@@ -176,7 +176,7 @@ fn main() {
         "decode" => {
             let encoded_value = &args[2];
             let decoded_value = decode_bencoded_value(encoded_value.as_bytes()).0;
-            println!("{}", decoded_value.to_string());
+            println!("{:?}", decoded_value.to_string());
         }
         "info" => {
             let mut torrent_file = File::open(&args[2]).unwrap();
