@@ -60,10 +60,20 @@ impl BencodeValue {
 impl ToString for BencodeValue {
     fn to_string(&self) -> String {
         match self {
-            BencodeValue::Dict(d) => format!("{:?}", d),
             BencodeValue::Bytes(_) => format!("{:?}", self.to_lossy_string()),
             BencodeValue::Num(n) => n.to_string(),
             BencodeValue::Null => "Null".to_string(),
+            BencodeValue::Dict(d) => {
+                let mut buf = String::from("{");
+                let mut keys = d.keys().collect::<Vec<_>>();
+                keys.sort();
+                for key in keys {
+                    buf += format!("\"{}\":", key).as_str(); 
+                    buf += d.get(key).unwrap().to_string().as_str();
+                    buf += ","
+                }
+                buf.strip_suffix(",").unwrap().to_owned() + "}" 
+            },
             BencodeValue::List(arr) => {
                 let mut buf = String::from("[");
                 for el in arr {
