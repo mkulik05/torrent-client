@@ -6,7 +6,7 @@
 #
 # DON'T EDIT THIS!
 exec cargo run \
-    --quiet \
+    # --quiet \
     --release \
     --target-dir=/tmp/codecrafters-bittorrent-target \
     --manifest-path $(dirname "$0")/Cargo.toml -- "$@"
