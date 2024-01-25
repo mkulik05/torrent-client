@@ -67,9 +67,9 @@ impl ToString for BencodeValue {
                 let mut buf = String::from("{");
                 let mut keys = d.keys().collect::<Vec<_>>();
                 keys.sort();
-                for key in keys {
+                for key in &keys {
                     buf += format!("\"{}\":", key).as_str(); 
-                    buf += d.get(key).unwrap().to_string().as_str();
+                    buf += d.get(*key).unwrap().to_string().as_str();
                     buf += ","
                 }
                 if !keys.is_empty() {
