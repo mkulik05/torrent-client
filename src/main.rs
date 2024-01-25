@@ -3,7 +3,7 @@ use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::env;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{IoSlice, Read, Write};
 use std::ops::Index;
 use std::string::ToString;
 
@@ -32,7 +32,7 @@ impl BencodeValue {
         }
     }
     fn to_string_with_sep(&self, arr_sep: &str) -> String {
-        let a =serde_json::Value::Object(serde_json::Map::<String, serde_json::Value>::new());
+        let a = serde_json::Value::Object(serde_json::Map::<String, serde_json::Value>::new());
         a.to_string();
         match self {
             BencodeValue::Bytes(_) => format!("{:?}", self.to_lossy_string()),
@@ -43,15 +43,15 @@ impl BencodeValue {
                 let mut keys = d.keys().collect::<Vec<_>>();
                 keys.sort();
                 for key in &keys {
-                    buf += format!("\"{}\":", key).as_str(); 
+                    buf += format!("\"{}\":", key).as_str();
                     buf += d.get(*key).unwrap().to_string_with_sep(arr_sep).as_str();
                     buf += ","
                 }
                 if !keys.is_empty() {
                     buf = buf.strip_suffix(",").unwrap().to_owned();
                 }
-                buf + "}" 
-            },
+                buf + "}"
+            }
             BencodeValue::List(arr) => {
                 let mut buf = String::from("[");
                 for el in arr {
@@ -68,28 +68,43 @@ impl BencodeValue {
     fn encode<W: Write>(&self, writer: &mut W) {
         match self {
             BencodeValue::Bytes(bytes) => {
-                writer.write_all(&bytes.len().to_le_bytes()).unwrap();
-                writer.write_all(b":").unwrap();
-                writer.write_all(bytes).unwrap();
+                writer
+                    .write_vectored(&[
+                        IoSlice::new(bytes.len().to_string().as_bytes()),
+                        IoSlice::new(b":"),
+                        IoSlice::new(bytes),
+                    ])
+                    .unwrap();
             }
             BencodeValue::Num(n) => {
-                writer.write_all(b"i").unwrap();
-                writer.write_all(&n.to_le_bytes()).unwrap();
-                writer.write_all(b"e").unwrap();
-            },
+                writer
+                    .write_vectored(&[
+                        IoSlice::new(b"i"),
+                        IoSlice::new(n.to_string().as_bytes()),
+                        IoSlice::new(b"e"),
+                    ])
+                    .unwrap();
+            }
             BencodeValue::List(arr) => {
                 writer.write_all(b"l").unwrap();
                 for el in arr {
                     el.encode(writer);
                 }
                 writer.write_all(b"e").unwrap();
-            },
+            }
             BencodeValue::Dict(dict) => {
                 writer.write_all(b"d").unwrap();
+
                 let mut keys = dict.keys().collect::<Vec<_>>();
                 keys.sort();
                 for key in keys {
-                    writer.write_all(key.as_bytes()).unwrap();
+                    writer
+                        .write_vectored(&[
+                            IoSlice::new(key.as_bytes().len().to_string().as_bytes()),
+                            IoSlice::new(b":"),
+                            IoSlice::new(key.as_bytes()),
+                        ])
+                        .unwrap();
                     dict.get(key).unwrap().encode(writer);
                 }
                 writer.write_all(b"e").unwrap();
@@ -114,7 +129,7 @@ impl Index<&str> for BencodeValue {
     type Output = BencodeValue;
     fn index(&self, key: &str) -> &Self::Output {
         if let BencodeValue::Dict(dict) = self {
-            &dict.get(key).unwrap_or(&BencodeValue::Null)
+            dict.get(key).unwrap_or(&BencodeValue::Null)
         } else {
             &BencodeValue::Null
         }
@@ -204,7 +219,7 @@ fn main() {
             torrent_file.read_to_end(&mut bytes).unwrap();
             let metainfo = decode_bencoded_value(&bytes).0;
             let mut hasher = Sha1::new();
-            
+
             let mut bytes: Vec<u8> = Vec::new();
             metainfo["info"].encode(&mut bytes);
             hasher.update(bytes);
@@ -213,7 +228,7 @@ fn main() {
                 "Tracker URL: {}\nLength: {}\nInfo Hash: {}",
                 metainfo["announce"].to_lossy_string(),
                 metainfo["info"]["length"].to_string(),
-                hex::encode(&result)
+                hex::encode(result)
             );
         }
         _ => println!("unknown command: {}", args[1]),
