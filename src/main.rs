@@ -224,11 +224,19 @@ fn main() {
             metainfo["info"].encode(&mut bytes);
             hasher.update(bytes);
             let result = hasher.finalize();
+            let BencodeValue::Bytes(ref byte_pieces) = metainfo["info"]["pieces"] else {panic!("ERROR")};
+            let mut hashes = Vec::new();
+            let n = byte_pieces.len() / 20;
+            for i in 0..n {
+                hashes.push(hex::encode(&byte_pieces[i * 20..(i + 1)*20]));
+            }
             println!(
-                "Tracker URL: {}\nLength: {}\nInfo Hash: {}",
+                "Tracker URL: {}\nLength: {}\nInfo Hash: {}\nPiece Length: {}\nPiece Hashes:\n{}",
                 metainfo["announce"].to_lossy_string(),
                 metainfo["info"]["length"].to_string(),
-                hex::encode(result)
+                hex::encode(result),
+                metainfo["info"]["piece length"].to_string(),
+                hashes.join("\n")
             );
         }
         _ => println!("unknown command: {}", args[1]),
