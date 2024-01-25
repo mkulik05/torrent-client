@@ -72,7 +72,10 @@ impl ToString for BencodeValue {
                     buf += d.get(key).unwrap().to_string().as_str();
                     buf += ","
                 }
-                buf.strip_suffix(",").unwrap().to_owned() + "}" 
+                if !keys.is_empty() {
+                    buf = buf.strip_suffix(",").unwrap().to_owned();
+                }
+                buf + "}" 
             },
             BencodeValue::List(arr) => {
                 let mut buf = String::from("[");
