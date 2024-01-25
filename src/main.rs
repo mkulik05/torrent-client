@@ -1,3 +1,4 @@
+use serde::Serialize;
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::env;
@@ -6,7 +7,7 @@ use std::io::{Read, Write};
 use std::ops::Index;
 use std::string::ToString;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 enum BencodeValue {
     Dict(HashMap<String, Self>),
     Bytes(Vec<u8>),
@@ -21,6 +22,47 @@ impl BencodeValue {
             String::from_utf8_lossy(arr).into()
         } else {
             "Null".to_string()
+        }
+    }
+    fn to_string(&self) -> String {
+        if let BencodeValue::List(_) = self {
+            self.to_string_with_sep(", ")
+        } else {
+            self.to_string_with_sep(",")
+        }
+    }
+    fn to_string_with_sep(&self, arr_sep: &str) -> String {
+        let a =serde_json::Value::Object(serde_json::Map::<String, serde_json::Value>::new());
+        a.to_string();
+        match self {
+            BencodeValue::Bytes(_) => format!("{:?}", self.to_lossy_string()),
+            BencodeValue::Num(n) => n.to_string(),
+            BencodeValue::Null => "Null".to_string(),
+            BencodeValue::Dict(d) => {
+                let mut buf = String::from("{");
+                let mut keys = d.keys().collect::<Vec<_>>();
+                keys.sort();
+                for key in &keys {
+                    buf += format!("\"{}\":", key).as_str(); 
+                    buf += d.get(*key).unwrap().to_string_with_sep(arr_sep).as_str();
+                    buf += ","
+                }
+                if !keys.is_empty() {
+                    buf = buf.strip_suffix(",").unwrap().to_owned();
+                }
+                buf + "}" 
+            },
+            BencodeValue::List(arr) => {
+                let mut buf = String::from("[");
+                for el in arr {
+                    buf += &el.to_string_with_sep(arr_sep);
+                    buf += arr_sep
+                }
+                if !arr.is_empty() {
+                    buf = buf.strip_suffix(arr_sep).unwrap().to_string();
+                }
+                buf + "]"
+            }
         }
     }
     fn encode<W: Write>(&self, writer: &mut W) {
@@ -53,41 +95,6 @@ impl BencodeValue {
                 writer.write_all(b"e").unwrap();
             }
             _ => {}
-        }
-    }
-}
-
-impl ToString for BencodeValue {
-    fn to_string(&self) -> String {
-        match self {
-            BencodeValue::Bytes(_) => format!("{:?}", self.to_lossy_string()),
-            BencodeValue::Num(n) => n.to_string(),
-            BencodeValue::Null => "Null".to_string(),
-            BencodeValue::Dict(d) => {
-                let mut buf = String::from("{");
-                let mut keys = d.keys().collect::<Vec<_>>();
-                keys.sort();
-                for key in &keys {
-                    buf += format!("\"{}\":", key).as_str(); 
-                    buf += d.get(*key).unwrap().to_string().as_str();
-                    buf += ","
-                }
-                if !keys.is_empty() {
-                    buf = buf.strip_suffix(",").unwrap().to_owned();
-                }
-                buf + "}" 
-            },
-            BencodeValue::List(arr) => {
-                let mut buf = String::from("[");
-                for el in arr {
-                    buf += &el.to_string();
-                    buf += ", "
-                }
-                if !arr.is_empty() {
-                    buf = buf.strip_suffix(", ").unwrap().to_string();
-                }
-                buf + "]"
-            }
         }
     }
 }
