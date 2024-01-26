@@ -1,9 +1,10 @@
-use std::env;
+use std::{env, io::Write};
 mod bencode;
 mod peers;
 mod torrent;
 use bencode::decode_bencoded_value;
-use peers::{Peer, TrackerReq};
+use peers::{BlockRequest, Peer, TrackerReq};
+use tokio::time::{sleep, Duration};
 use torrent::Torrent;
 
 #[tokio::main]
@@ -42,13 +43,40 @@ async fn main() {
         }
         "handshake" => {
             let torrent = Torrent::new(&args[2]);
-            let peer = Peer {
-                addr: args[3].clone(),
-            };
-            let peer_id = peer.handshake(&torrent).await;
-            println!("Peer ID: {}", peer_id);
+            let peer = Peer::new(&args[3], &torrent).await;
+            println!("Peer ID: {}", peer.peer_id);
         }
-        "download_piece" => {}
+        "download_piece" => {
+            let torrent = Torrent::new(&args[4]);
+            let tracker_req = TrackerReq::init(&torrent);
+            let tracker_resp = tracker_req.send(&torrent).await;
+            let mut peer = Peer::new(&tracker_resp.peers[0], &torrent).await;
+            peer.send_interested_msg().await;
+            let piece_i = args[5].parse::<u32>().unwrap();
+            let pieces_n = torrent.info.piece_length / 16384; // 16kiB block
+            let mut begin = 0;
+            let mut f = std::fs::File::create(&args[3]).unwrap();
+            for n in 0..pieces_n {
+                let length = if n == (pieces_n - 1) {
+                    torrent.info.piece_length - pieces_n * 16384
+                } else {
+                    16384
+                };
+                if length == 0 {
+                    break;
+                }
+                let req = BlockRequest {
+                    piece_i,
+                    begin,
+                    length: length as u32,
+                };
+                let bytes = peer.fetch(&req).await;
+                f.write_all(&bytes).unwrap();
+                begin += 16384;
+                sleep(Duration::from_millis(50)).await;
+            }
+            println!("Piece {} downloaded to {}.", piece_i, &args[3]);
+        }
         _ => println!("unknown command: {}", args[1]),
     }
 }
