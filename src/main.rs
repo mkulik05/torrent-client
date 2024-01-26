@@ -43,14 +43,14 @@ async fn main() {
         }
         "handshake" => {
             let torrent = Torrent::new(&args[2]);
-            let peer = Peer::new(&args[3], &torrent).await;
+            let peer = Peer::new(&args[3], &torrent, true).await;
             println!("Peer ID: {}", peer.peer_id);
         }
         "download_piece" => {
             let torrent = Torrent::new(&args[4]);
             let tracker_req = TrackerReq::init(&torrent);
             let tracker_resp = tracker_req.send(&torrent).await;
-            let mut peer = Peer::new(&tracker_resp.peers[0], &torrent).await;
+            let mut peer = Peer::new(&tracker_resp.peers[0], &torrent, false).await;
             peer.send_interested_msg().await;
             let piece_i = args[5].parse::<u32>().unwrap();
             let pieces_n = torrent.info.piece_length / 16384; // 16kiB block

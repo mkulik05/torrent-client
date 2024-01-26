@@ -87,24 +87,33 @@ impl TrackerReq {
 
 pub struct Peer {
     pub peer_id: String,
-    pub bitfield: Vec<u8>,
+    pub bitfield: Option<Vec<u8>>,
     socket: TcpStream,
 }
 
 impl Peer {
-    pub async fn new(addr: &str, torrent: &Torrent) -> Peer {
+    // just for test 9 (with hanshake only)
+    pub async fn new(addr: &str, torrent: &Torrent, only_handshake: bool) -> Peer {
         let mut socket = TcpStream::connect(addr).await.unwrap();
         let peer_id = Peer::handshake(&torrent, &mut socket).await;
-        let mut msg_len = [0; 4];
-        socket.read_exact(&mut msg_len).await.unwrap();
-        let msg_len = u32::from_be_bytes(msg_len);
-        let mut data = vec![0; msg_len as usize];
-        socket.read_exact(&mut data).await.unwrap();
-        assert_eq!(data[0], 5);
-        Peer {
-            peer_id,
-            socket,
-            bitfield: data[1..].to_vec(),
+        if !only_handshake {
+            let mut msg_len = [0; 4];
+            socket.read_exact(&mut msg_len).await.unwrap();
+            let msg_len = u32::from_be_bytes(msg_len);
+            let mut data = vec![0; msg_len as usize];
+            socket.read_exact(&mut data).await.unwrap();
+            assert_eq!(data[0], 5);
+            Peer {
+                peer_id,
+                socket,
+                bitfield: Some(data[1..].to_vec()),
+            }
+        } else {
+            Peer {
+                peer_id,
+                socket,
+                bitfield: None,
+            }
         }
     }
     pub async fn send_interested_msg(&mut self) {
