@@ -1,12 +1,14 @@
 use reqwest::Client;
 use serde::Serialize;
 use sha1::{Digest, Sha1};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::io::{IoSlice, Read, Write};
 use std::ops::Index;
 use std::string::ToString;
+use tokio::net::TcpStream;
 
 #[derive(Clone, Debug, Serialize)]
 enum BencodeValue {
@@ -211,6 +213,15 @@ fn parse_torrent_file(path: &str) -> BencodeValue {
     decode_bencoded_value(&bytes).0
 }
 
+fn get_hash_bytes(src: &BencodeValue) -> Vec<u8> {
+    let mut hasher = Sha1::new();
+    let mut bytes: Vec<u8> = Vec::new();
+    src.encode(&mut bytes);
+    hasher.update(bytes);
+    let info_hash = hasher.finalize().to_vec();
+    info_hash
+} 
+
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = env::args().collect();
@@ -248,11 +259,7 @@ async fn main() {
         }
         "peers" => {
             let metainfo = parse_torrent_file(&args[2]);
-            let mut hasher = Sha1::new();
-            let mut bytes: Vec<u8> = Vec::new();
-            metainfo["info"].encode(&mut bytes);
-            hasher.update(bytes);
-            let info_hash = hasher.finalize();
+            let info_hash = get_hash_bytes(&metainfo);
             let url_encoded_hash: String =
                 info_hash.iter().map(|b| format!("%{:02x}", b)).collect();
             let url = format!(
@@ -261,7 +268,7 @@ async fn main() {
                 url_encoded_hash.as_str()
             );
             let params = &[
-                ("peer_id", "00112233445566770099"),
+                ("peer_id", "00112253445566770099"),
                 ("port", "6881"),
                 ("uploaded", "0"),
                 ("downloaded", "0"),
@@ -279,6 +286,7 @@ async fn main() {
                 .await
                 .unwrap();
             let response = decode_bencoded_value(&body).0;
+            println!("{}", response.to_string());
             let BencodeValue::Bytes(ref peers_bytes) = response["peers"] else {
                 panic!("Error")
             };
@@ -295,6 +303,21 @@ async fn main() {
                 ))
             }
             println!("{}", ips_str.join("\n"));
+        },
+        "handshake" => {
+            let metainfo = parse_torrent_file(&args[2]);
+            let peer_addr = &args[3];
+            let mut msg = Vec::from(b"\x13"); // 0x13 = 19
+            msg.extend_from_slice(b"BitTorrent protocol");
+            msg.extend_from_slice(&[0; 8]);
+            msg.extend_from_slice(&get_hash_bytes(&metainfo["info"]));
+            msg.extend_from_slice(b"00112233445566770099");
+            let mut stream = TcpStream::connect(peer_addr).await.unwrap();
+            stream.write_all(&msg).await.unwrap();
+            let mut response = [0; 68];
+            stream.read_exact(&mut response).await.unwrap();
+            let peer_id = &response[response.len() - 20..response.len()];
+            println!("Peer ID: {}", hex::encode(peer_id));
         }
         _ => println!("unknown command: {}", args[1]),
     }
