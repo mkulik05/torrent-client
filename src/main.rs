@@ -307,7 +307,8 @@ async fn main() {
         "handshake" => {
             let metainfo = parse_torrent_file(&args[2]);
             let peer_addr = &args[3];
-            let mut msg = Vec::from(b"\x13"); // 0x13 = 19
+            let mut msg = Vec::new();
+            msg.push(b"\x13"[0]);// 0x13 = 19
             msg.extend_from_slice(b"BitTorrent protocol");
             msg.extend_from_slice(&[0; 8]);
             msg.extend_from_slice(&get_hash_bytes(&metainfo["info"]));
