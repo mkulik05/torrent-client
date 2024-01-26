@@ -53,28 +53,36 @@ async fn main() {
             let mut peer = Peer::new(&tracker_resp.peers[0], &torrent, false).await;
             peer.send_interested_msg().await;
             let piece_i = args[5].parse::<u32>().unwrap();
-            let pieces_n = torrent.info.piece_length / 16384 + 1; // 16kiB block
+            let piece_length = if piece_i as usize == torrent.info.piece_hashes.len() - 1 {
+                torrent.info.length - torrent.info.piece_length * piece_i as i64
+            } else {
+                torrent.info.piece_length
+            };
+            let blocks_n = piece_length / 16384; // 16kiB block
+            println!("{} - {}", piece_length, blocks_n);
             let mut begin = 0;
             let mut f = std::fs::File::create(&args[3]).unwrap();
-            for n in 0..pieces_n {
-                let length = if n == (pieces_n - 1) {
-                    torrent.info.piece_length - pieces_n * 16384
-                } else {
-                    16384
-                };
-                if length <= 0 {
-                    break;
-                }
+            for _ in 0..blocks_n {
                 let req = BlockRequest {
                     piece_i,
                     begin,
-                    length: length as u32,
+                    length: 16384,
                 };
                 let bytes = peer.fetch(&req).await;
                 f.write_all(&bytes).unwrap();
                 begin += 16384;
                 sleep(Duration::from_millis(50)).await;
             }
+            if piece_length - blocks_n * 16384 > 0 {
+                let req = BlockRequest {
+                    piece_i,
+                    begin,
+                    length: (piece_length - blocks_n * 16384) as u32,
+                };
+                let bytes = peer.fetch(&req).await;
+                f.write_all(&bytes).unwrap();
+            }
+
             println!("Piece {} downloaded to {}.", piece_i, &args[3]);
         }
         _ => println!("unknown command: {}", args[1]),
