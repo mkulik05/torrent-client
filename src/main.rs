@@ -259,7 +259,7 @@ async fn main() {
         }
         "peers" => {
             let metainfo = parse_torrent_file(&args[2]);
-            let info_hash = get_hash_bytes(&metainfo);
+            let info_hash = get_hash_bytes(&metainfo["info"]);
             let url_encoded_hash: String =
                 info_hash.iter().map(|b| format!("%{:02x}", b)).collect();
             let url = format!(
