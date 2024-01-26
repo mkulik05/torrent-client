@@ -53,7 +53,7 @@ async fn main() {
             let mut peer = Peer::new(&tracker_resp.peers[0], &torrent, false).await;
             peer.send_interested_msg().await;
             let piece_i = args[5].parse::<u32>().unwrap();
-            let pieces_n = torrent.info.piece_length / 16384; // 16kiB block
+            let pieces_n = torrent.info.piece_length / 16384 + 1; // 16kiB block
             let mut begin = 0;
             let mut f = std::fs::File::create(&args[3]).unwrap();
             for n in 0..pieces_n {
@@ -62,7 +62,7 @@ async fn main() {
                 } else {
                     16384
                 };
-                if length == 0 {
+                if length <= 0 {
                     break;
                 }
                 let req = BlockRequest {
