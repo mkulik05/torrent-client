@@ -1,4 +1,4 @@
-use crate::bencode::{decode_bencoded_value, BencodeValue};
+use crate::bencode::BencodeValue;
 use sha1::{Digest, Sha1};
 use std::fs::File;
 use std::io::Read;
@@ -40,16 +40,16 @@ impl Torrent {
         Torrent {
             tracker_url: parsed_file["announce"].to_lossy_string(),
             info: torrent_info,
-            info_hash: Torrent::get_hash_bytes(&parsed_file["info"])
+            info_hash: Torrent::get_hash_bytes(&parsed_file["info"]),
         }
     }
     fn parse_torrent_file(path: &str) -> BencodeValue {
         let mut torrent_file = File::open(path).unwrap();
         let mut bytes = Vec::new();
         torrent_file.read_to_end(&mut bytes).unwrap();
-        decode_bencoded_value(&bytes).0
+        BencodeValue::decode_bencoded_value(&bytes).0
     }
-    fn get_hash_bytes(src: &BencodeValue) -> Vec<u8> {
+    pub fn get_hash_bytes(src: &BencodeValue) -> Vec<u8> {
         let mut hasher = Sha1::new();
         let mut bytes: Vec<u8> = Vec::new();
         src.encode(&mut bytes);

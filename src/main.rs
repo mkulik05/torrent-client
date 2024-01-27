@@ -1,11 +1,13 @@
-use std::{env, io::Write};
+use std::env;
 mod bencode;
+mod download;
 mod peers;
 mod torrent;
-use bencode::decode_bencoded_value;
-use peers::{BlockRequest, Peer, TrackerReq};
-use tokio::time::{sleep, Duration};
+use bencode::BencodeValue;
+use download::Downloader;
+use peers::{Peer, TrackerReq};
 use torrent::Torrent;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
@@ -15,7 +17,7 @@ async fn main() {
     match command.as_str() {
         "decode" => {
             let encoded_value = &args[2];
-            let decoded_value = decode_bencoded_value(encoded_value.as_bytes()).0;
+            let decoded_value = BencodeValue::decode_bencoded_value(encoded_value.as_bytes()).0;
             println!("{}", decoded_value.to_string());
         }
         "info" => {
@@ -53,37 +55,31 @@ async fn main() {
             let mut peer = Peer::new(&tracker_resp.peers[0], &torrent, false).await;
             peer.send_interested_msg().await;
             let piece_i = args[5].parse::<u32>().unwrap();
-            let piece_length = if piece_i as usize == torrent.info.piece_hashes.len() - 1 {
-                torrent.info.length - torrent.info.piece_length * piece_i as i64
-            } else {
-                torrent.info.piece_length
+            let torrent = Arc::new(torrent);
+            let mut downloader = Downloader {
+                torrent,
+                peer,
+                piece_i: Some(piece_i),
+                buf: std::fs::File::create(&args[3]).unwrap(),
             };
-            let blocks_n = piece_length / 16384; // 16kiB block
-            println!("{} - {}", piece_length, blocks_n);
-            let mut begin = 0;
-            let mut f = std::fs::File::create(&args[3]).unwrap();
-            for _ in 0..blocks_n {
-                let req = BlockRequest {
-                    piece_i,
-                    begin,
-                    length: 16384,
-                };
-                let bytes = peer.fetch(&req).await;
-                f.write_all(&bytes).unwrap();
-                begin += 16384;
-                sleep(Duration::from_millis(50)).await;
-            }
-            if piece_length - blocks_n * 16384 > 0 {
-                let req = BlockRequest {
-                    piece_i,
-                    begin,
-                    length: (piece_length - blocks_n * 16384) as u32,
-                };
-                let bytes = peer.fetch(&req).await;
-                f.write_all(&bytes).unwrap();
-            }
-
+            downloader.download().await;
             println!("Piece {} downloaded to {}.", piece_i, &args[3]);
+        }
+        "download" => {
+            let torrent = Torrent::new(&args[4]);
+            let tracker_req = TrackerReq::init(&torrent);
+            let tracker_resp = tracker_req.send(&torrent).await;
+            let mut peer = Peer::new(&tracker_resp.peers[0], &torrent, false).await;
+            peer.send_interested_msg().await;
+            let torrent = Arc::new(torrent);
+            let mut downloader = Downloader {
+                torrent,
+                peer,
+                piece_i: None,
+                buf: std::fs::File::create(&args[3]).unwrap(),
+            };
+            downloader.download().await;
+            println!("Downloaded {} to {}.", &args[4], &args[3]);
         }
         _ => println!("unknown command: {}", args[1]),
     }

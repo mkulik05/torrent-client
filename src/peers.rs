@@ -1,4 +1,4 @@
-use crate::bencode::{decode_bencoded_value, BencodeValue};
+use crate::bencode::BencodeValue;
 use crate::torrent::Torrent;
 use reqwest::Client;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -62,7 +62,7 @@ impl TrackerReq {
             .bytes()
             .await
             .unwrap();
-        let response = decode_bencoded_value(&body).0;
+        let response = BencodeValue::decode_bencoded_value(&body).0;
         let BencodeValue::Bytes(ref peers_bytes) = response["peers"] else {
             panic!("Error")
         };
