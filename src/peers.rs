@@ -149,7 +149,7 @@ impl Peer {
         let mut response = [0; 68];
         stream.read_exact(&mut response).await.unwrap();
         let peer_id = &response[response.len() - 20..response.len()];
-        hex::encode(peer_id)
+        hex::encode(peer_id) 
     }
 }
 
