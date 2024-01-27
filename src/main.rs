@@ -56,12 +56,8 @@ async fn main() {
             peer.send_interested_msg().await;
             let piece_i = args[5].parse::<u32>().unwrap();
             let torrent = Arc::new(torrent);
-            let mut downloader = Downloader {
-                torrent,
-                peer,
-                piece_i: Some(piece_i),
-                buf: std::fs::File::create(&args[3]).unwrap(),
-            };
+            
+            let mut downloader = Downloader::new(torrent, peer, Some(piece_i), &args[3]); 
             downloader.download().await;
             println!("Piece {} downloaded to {}.", piece_i, &args[3]);
         }
@@ -72,12 +68,7 @@ async fn main() {
             let mut peer = Peer::new(&tracker_resp.peers[0], &torrent, false).await;
             peer.send_interested_msg().await;
             let torrent = Arc::new(torrent);
-            let mut downloader = Downloader {
-                torrent,
-                peer,
-                piece_i: None,
-                buf: std::fs::File::create(&args[3]).unwrap(),
-            };
+            let mut downloader = Downloader::new(torrent, peer, None, &args[3]);
             downloader.download().await;
             println!("Downloaded {} to {}.", &args[4], &args[3]);
         }

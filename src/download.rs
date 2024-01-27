@@ -1,24 +1,35 @@
-use crate::bencode::BencodeValue;
 use crate::peers::{BlockRequest, Peer};
 use crate::torrent::Torrent;
-use std::io::{Write, Read, Seek, SeekFrom};
+use std::io::Write;
+use std::fs::File;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
-pub struct Downloader<W: Write + Read + Seek> {
+pub struct Downloader {
     pub torrent: Arc<Torrent>,
     pub peer: Peer,
     pub piece_i: Option<u32>,
-    pub buf: W,
+    pub file: File,
+    buf: Vec<u8>
 }
 
-impl<W: Write + Read + Seek> Downloader<W> {
+impl Downloader {
+    pub fn new(torrent: Arc<Torrent>, peer: Peer, piece_i: Option<u32>, path: &str) -> Self {
+        Downloader {
+            torrent,
+            peer,
+            piece_i,
+            file: std::fs::File::create(path).unwrap(),
+            buf: Vec::new()
+        }
+    }
     pub async fn download(&mut self) {
         if let Some(piece_i) = self.piece_i {
-            let bytes_n = self.download_piece().await;
-            assert!(self.verify_hash(0, bytes_n, piece_i as usize))
+            self.download_piece().await;
+            assert!(self.verify_hash(piece_i as usize));
+            self.file.write_all(&self.buf).unwrap();
         } else {
-            
+
         }
     }
 
@@ -54,11 +65,8 @@ impl<W: Write + Read + Seek> Downloader<W> {
         }
         piece_length as u32
     }
-    fn verify_hash(&mut self, start_byte: u64, piece_length: u32, piece_n: usize) -> bool {
-        self.buf.seek(SeekFrom::Start(start_byte)).unwrap();
-        let mut buf = vec![0u8; piece_length as usize];
-        self.buf.read_exact(&mut buf[..]).unwrap();
-        let hash = Torrent::get_hash_bytes(&BencodeValue::Bytes(buf));
+    fn verify_hash(&mut self, piece_n: usize) -> bool {
+        let hash = Torrent::bytes_hash(&self.buf);
         hash == self.torrent.info.piece_hashes[piece_n]
     }
 }
