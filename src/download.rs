@@ -28,8 +28,17 @@ impl Downloader {
             self.download_piece().await;
             assert!(self.verify_hash(piece_i as usize));
             self.file.write_all(&self.buf).unwrap();
+            self.buf.clear();
         } else {
-
+            let pieces_n = self.torrent.info.piece_hashes.len();
+            for i in 0..pieces_n {
+                self.piece_i = Some(i as u32);
+                self.download_piece().await;
+                assert!(self.verify_hash(i as usize));
+                self.file.write_all(&self.buf).unwrap();
+                self.buf.clear();
+            }
+            self.piece_i = None;
         }
     }
 
@@ -52,7 +61,7 @@ impl Downloader {
             let bytes = self.peer.fetch(&req).await;
             self.buf.write_all(&bytes).unwrap();
             begin += 16384;
-            sleep(Duration::from_millis(10)).await;
+            sleep(Duration::from_millis(2)).await;
         }
         if piece_length - blocks_n * 16384 > 0 {
             let req = BlockRequest {
