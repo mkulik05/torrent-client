@@ -12,20 +12,21 @@ pub enum BencodeValue {
 }
 
 impl BencodeValue {
-    pub fn decode_bencoded_value(mut encoded_value: &[u8]) -> (Self, usize) {
+    pub fn decode_bencoded_value(mut encoded_value: &[u8]) -> anyhow::Result<(Self, usize)> {
         match encoded_value[0] {
             x if x.is_ascii_digit() => {
-                let colon_index = encoded_value.iter().position(|b| *b == b':').unwrap();
+                let colon_index = if let Some(e) = encoded_value.iter().position(|b| *b == b':') {
+                    e
+                } else {
+                    anyhow::bail!("Invalid bencoded value, can't process it")
+                };
                 let number_string = &encoded_value[..colon_index];
-                let number = std::str::from_utf8(number_string)
-                    .unwrap()
-                    .parse::<i64>()
-                    .unwrap();
+                let number = std::str::from_utf8(number_string)?.parse::<i64>()?;
                 let string = &encoded_value[colon_index + 1..colon_index + 1 + number as usize];
-                return (
+                return Ok((
                     BencodeValue::Bytes(string.into()),
                     colon_index + 1 + number as usize,
-                );
+                ));
             }
             b'l' => {
                 let mut list = Vec::new();
@@ -35,20 +36,22 @@ impl BencodeValue {
                     if encoded_value.is_empty() || encoded_value.starts_with(&[b'e']) {
                         break;
                     }
-                    let (list_part, len) = BencodeValue::decode_bencoded_value(encoded_value);
+                    let (list_part, len) = BencodeValue::decode_bencoded_value(encoded_value)?;
                     total_len += len;
                     list.push(list_part.clone());
                     encoded_value = &encoded_value[len..];
                 }
-                return (BencodeValue::List(list), total_len);
+                return Ok((BencodeValue::List(list), total_len));
             }
             b'i' => {
-                let num_end = encoded_value.iter().position(|b| *b == b'e').unwrap();
-                let int_res = std::str::from_utf8(&encoded_value[1..num_end])
-                    .unwrap()
-                    .parse::<i64>();
+                let num_end = if let Some(e) = encoded_value.iter().position(|b| *b == b'e') {
+                    e
+                } else {
+                    anyhow::bail!("Invalid bencoded value, can't process it")
+                };
+                let int_res = std::str::from_utf8(&encoded_value[1..num_end])?.parse::<i64>();
                 if let Ok(n) = int_res {
-                    return (BencodeValue::Num(n), num_end + 1);
+                    return Ok((BencodeValue::Num(n), num_end + 1));
                 }
             }
             b'd' => {
@@ -59,17 +62,19 @@ impl BencodeValue {
                     if encoded_value.is_empty() || encoded_value.starts_with(&[b'e']) {
                         break;
                     }
-                    let (BencodeValue::Bytes(key), key_len) = BencodeValue::decode_bencoded_value(encoded_value)
+                    let (BencodeValue::Bytes(key), key_len) =
+                        BencodeValue::decode_bencoded_value(encoded_value)?
                     else {
                         panic!("Invalid torrent structure")
                     };
                     let key = String::from_utf8_lossy(&key);
-                    let (value, val_len) = BencodeValue::decode_bencoded_value(&encoded_value[key_len..]);
+                    let (value, val_len) =
+                        BencodeValue::decode_bencoded_value(&encoded_value[key_len..])?;
                     total_len += val_len + key_len;
                     dict.insert(key.into_owned(), value);
                     encoded_value = &encoded_value[val_len + key_len..];
                 }
-                return (BencodeValue::Dict(dict), total_len);
+                return Ok((BencodeValue::Dict(dict), total_len));
             }
             _ => {}
         }
@@ -94,8 +99,6 @@ impl BencodeValue {
         }
     }
     fn to_string_with_sep(&self, arr_sep: &str) -> String {
-        let a = serde_json::Value::Object(serde_json::Map::<String, serde_json::Value>::new());
-        a.to_string();
         match self {
             BencodeValue::Bytes(_) => format!("{:?}", self.to_lossy_string()),
             BencodeValue::Num(n) => n.to_string(),
@@ -106,11 +109,11 @@ impl BencodeValue {
                 keys.sort();
                 for key in &keys {
                     buf += format!("\"{}\":", key).as_str();
-                    buf += d.get(*key).unwrap().to_string_with_sep(arr_sep).as_str();
+                    buf += d.get(*key).expect("Key exist").to_string_with_sep(arr_sep).as_str();
                     buf += ","
                 }
                 if !keys.is_empty() {
-                    buf = buf.strip_suffix(",").unwrap().to_owned();
+                    buf = buf.strip_suffix(",").expect("Suffix is added anyway").to_owned();
                 }
                 buf + "}"
             }
@@ -121,13 +124,13 @@ impl BencodeValue {
                     buf += arr_sep
                 }
                 if !arr.is_empty() {
-                    buf = buf.strip_suffix(arr_sep).unwrap().to_string();
+                    buf = buf.strip_suffix(arr_sep).expect("Suffix is added anyway").to_string();
                 }
                 buf + "]"
             }
         }
     }
-    pub fn encode<W: Write>(&self, writer: &mut W) {
+    pub fn encode<W: Write>(&self, writer: &mut W) -> anyhow::Result<()>{
         match self {
             BencodeValue::Bytes(bytes) => {
                 writer
@@ -135,8 +138,7 @@ impl BencodeValue {
                         IoSlice::new(bytes.len().to_string().as_bytes()),
                         IoSlice::new(b":"),
                         IoSlice::new(bytes),
-                    ])
-                    .unwrap();
+                    ])?;
             }
             BencodeValue::Num(n) => {
                 writer
@@ -144,18 +146,17 @@ impl BencodeValue {
                         IoSlice::new(b"i"),
                         IoSlice::new(n.to_string().as_bytes()),
                         IoSlice::new(b"e"),
-                    ])
-                    .unwrap();
+                    ])?;
             }
             BencodeValue::List(arr) => {
-                writer.write_all(b"l").unwrap();
+                writer.write_all(b"l")?;
                 for el in arr {
-                    el.encode(writer);
+                    el.encode(writer)?;
                 }
-                writer.write_all(b"e").unwrap();
+                writer.write_all(b"e")?;
             }
             BencodeValue::Dict(dict) => {
-                writer.write_all(b"d").unwrap();
+                writer.write_all(b"d")?;
 
                 let mut keys = dict.keys().collect::<Vec<_>>();
                 keys.sort();
@@ -165,14 +166,14 @@ impl BencodeValue {
                             IoSlice::new(key.as_bytes().len().to_string().as_bytes()),
                             IoSlice::new(b":"),
                             IoSlice::new(key.as_bytes()),
-                        ])
-                        .unwrap();
-                    dict.get(key).unwrap().encode(writer);
+                        ])?;
+                    dict.get(key).expect("Key exists").encode(writer)?;
                 }
-                writer.write_all(b"e").unwrap();
+                writer.write_all(b"e")?;
             }
             _ => {}
         }
+        Ok(())
     }
 }
 
