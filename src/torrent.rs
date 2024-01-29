@@ -2,6 +2,7 @@ use crate::bencode::BencodeValue;
 use sha1::{Digest, Sha1};
 use std::fs::File;
 use std::io::Read;
+use crate::logger::{log, LogLevel};
 
 #[derive(Debug)]
 pub struct Torrent {
@@ -19,6 +20,7 @@ pub struct TorrentInfo {
 
 impl Torrent {
     pub fn new(path: &str) -> anyhow::Result<Self> {
+        log!(LogLevel::Debug, "Parsing torrent file");
         let parsed_file = Torrent::parse_torrent_file(path)?;
         let BencodeValue::Num(length) = parsed_file["info"]["length"] else {
             anyhow::bail!("Invalid torrent file structure");
@@ -29,6 +31,7 @@ impl Torrent {
         let BencodeValue::Bytes(ref byte_pieces) = parsed_file["info"]["pieces"] else {
             anyhow::bail!("Invalid torrent file structure");
         };
+        log!(LogLevel::Debug, "Parsed successfully");
         let mut piece_hashes = Vec::new();
         let n = byte_pieces.len() / 20;
         for i in 0..n {

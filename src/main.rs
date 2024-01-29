@@ -3,25 +3,29 @@ mod bencode;
 mod download;
 mod peers;
 mod torrent;
+mod logger;
+mod tracker;
 use bencode::BencodeValue;
 use download::Downloader;
-use peers::{Peer, TrackerReq};
+use peers::Peer;
+use tracker::TrackerReq;
 use torrent::Torrent;
 use std::sync::Arc;
-use std::io::{Write, stderr};
+use crate::logger::{log, LogLevel};
 
 fn handle_result<T>(res: anyhow::Result<T>) -> T {
     match res {
         Ok(v) => v,
         Err(err) => {
-            let _ = writeln!(stderr(), "error: {}", err);
-            panic!("");
+            log!(LogLevel::Fatal, "error {:?}", err);
+            panic!("error {:?}", err);
         }
     }
   }
 
 #[tokio::main]
 async fn main() {
+    handle_result(logger::Logger::init(format!("/tmp/log{}.txt", chrono::Local::now().format("%d-%m-%Y_%H-%M-%S"))));
     let args: Vec<String> = env::args().collect();
     let command = &args[1];
 
