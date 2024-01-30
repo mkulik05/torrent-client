@@ -1,6 +1,5 @@
 use crate::bencode::BencodeValue;
 use crate::torrent::Torrent;
-use reqwest::Client;
 use crate::logger::{log, LogLevel};
 
 pub struct TrackerReq {
@@ -45,7 +44,9 @@ impl TrackerReq {
             ("compact", self.compact.to_string()),
         ];
         log!(LogLevel::Debug, "Sending tracker request");
-        let client = Client::new();
+        let client = reqwest::Client::builder()
+        .user_agent("my torrent")
+        .build()?;
         let body = client
             .get(format!(
                 "{}?info_hash={}",

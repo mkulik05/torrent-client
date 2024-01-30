@@ -7,6 +7,7 @@ use crate::logger::{log, LogLevel};
 #[derive(Debug)]
 pub struct Torrent {
     pub tracker_url: String,
+    // pub tracker_list: Vec<String>,
     pub info: TorrentInfo,
     pub info_hash: Vec<u8>,
 }
@@ -22,6 +23,7 @@ impl Torrent {
     pub fn new(path: &str) -> anyhow::Result<Self> {
         log!(LogLevel::Debug, "Parsing torrent file");
         let parsed_file = Torrent::parse_torrent_file(path)?;
+        println!("{}", parsed_file["announce-list"][0][0].to_string());
         let BencodeValue::Num(length) = parsed_file["info"]["length"] else {
             anyhow::bail!("Invalid torrent file structure");
         };

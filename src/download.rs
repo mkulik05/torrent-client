@@ -1,5 +1,6 @@
-use crate::peers::Peer;
+use crate::peers::{Peer, PeerStatus};
 use crate::torrent::Torrent;
+use std::ops::Range;
 use std::fs::File;
 use std::io::Write;
 use std::sync::Arc;
@@ -17,7 +18,7 @@ pub struct BlockRequest {
 pub struct Downloader {
     pub torrent: Arc<Torrent>,
     pub peer: Peer,
-    pub piece_i: Option<u64>,
+    pub piece_i: Range<u64>,
     pub file: File,
     buf: Vec<u8>,
     chunk_size: u64
@@ -27,7 +28,7 @@ impl Downloader {
     pub fn new(
         torrent: Arc<Torrent>,
         peer: Peer,
-        piece_i: Option<u64>,
+        piece_i: Range<u64>,
         path: &str,
     ) -> anyhow::Result<Self> {
         Ok(Downloader {
@@ -40,30 +41,22 @@ impl Downloader {
         })
     }
     pub async fn download(&mut self) -> anyhow::Result<()> {
-        if let Some(piece_i) = self.piece_i {
-            log!(LogLevel::Debug, "Downloading 1 piece");
-            self.download_piece().await?;
-            assert!(self.verify_hash(piece_i as usize));
+        if let PeerStatus::NotConnected | PeerStatus::WaitingForInterestedMsg = self.peer.status {
+            log!(LogLevel::Debug, "Peer is not ready for downloading yet");
+            self.peer.connect(&self.torrent).await?;
+        }  
+        log!(LogLevel::Debug, "Downloading {:?} pieces", self.piece_i);
+        for i in self.piece_i.clone() {
+            self.download_piece(i).await?;
+            assert!(self.verify_hash(i as usize));
             self.file.write_all(&self.buf)?;
             self.buf.clear();
-        } else {
-            let pieces_n = self.torrent.info.piece_hashes.len();
-            log!(LogLevel::Debug, "Downloading whole file ({pieces_n}) pieces");
-            for i in 0..pieces_n {
-                self.piece_i = Some(i as u64);
-                self.download_piece().await?;
-                assert!(self.verify_hash(i as usize));
-                self.file.write_all(&self.buf)?;
-                self.buf.clear();
-            }
-            self.piece_i = None;
         }
         Ok(())
     }
 
     // peer that already sent you unchoke msg
-    async fn download_piece(&mut self) -> anyhow::Result<u64> {
-        let piece_i = self.piece_i.expect("Called only when value is Some");
+    async fn download_piece(&mut self, piece_i: u64) -> anyhow::Result<u64> {
         let piece_length = if piece_i as usize == self.torrent.info.piece_hashes.len() - 1 {
             self.torrent.info.length - self.torrent.info.piece_length * piece_i
         } else {
