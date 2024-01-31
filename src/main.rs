@@ -241,7 +241,7 @@ async fn main() {
             }
 
             for peer in tracker_resp.peers {
-                if let Ok(mut peer) = Peer::new(&peer).await {
+                if let Ok(mut peer) = Peer::new(&peer, send_data.clone()).await {
                     if let Ok(()) = peer.connect(&torrent).await {
                         peers.push(peer);
                     }
@@ -311,11 +311,11 @@ async fn main() {
                     let task = chunks_tasks.pop_front().unwrap();
                     let mut downloader = DownloadReq::new(torrent.clone(), peers.remove(0), task);
                     peers.push(handle_result(
-                        Peer::new(&downloader.peer.socket.peer_addr().unwrap().to_string()).await,
+                        Peer::new(&downloader.peer.socket.peer_addr().unwrap().to_string(), send_data.clone()).await,
                     ));
                     tokio::spawn(async move {
                         log!(LogLevel::Debug, "Curr task: {:?}", downloader.task);
-                        handle_result(downloader.request_data(send_status, send_data).await);
+                        handle_result(downloader.request_data(send_status).await);
                         drop(permit);
                     });
                 }

@@ -1,5 +1,5 @@
 use crate::logger::{log, LogLevel};
-use crate::peers::{Peer, PeerStatus};
+use crate::peers::{Peer, PeerMessage, PeerStatus};
 use crate::torrent::Torrent;
 use crate::DownloadStatus;
 use std::ops::Range;
@@ -18,13 +18,6 @@ pub struct ChunksTask {
     pub piece_i: u64,
     pub chunks: Range<u64>,
     pub includes_last_chunk: bool,
-}
-
-#[derive(Debug)]
-pub struct BlockRequest {
-    pub piece_i: u32,
-    pub begin: u32,
-    pub length: u32,
 }
 
 #[derive(Debug)]
@@ -50,9 +43,8 @@ impl DownloadReq {
     pub async fn request_data(
         &mut self,
         error_sender: Sender<DownloadStatus>,
-        data_sender: Sender<DataPiece>,
     ) -> anyhow::Result<()> {
-        if let PeerStatus::NotConnected | PeerStatus::WaitingForInterestedMsg = self.peer.status {
+        if let PeerStatus::NotConnected | PeerStatus::Choked = self.peer.status {
             log!(LogLevel::Debug, "Peer is not ready for downloading yet");
             self.peer.connect(&self.torrent).await?;
         }
@@ -84,12 +76,15 @@ impl DownloadReq {
             } else {
                 crate::CHUNK_SIZE
             };
-            let req = BlockRequest {
-                piece_i: self.task.piece_i as u32,
-                begin: begin as u32,
-                length: length as u32,
-            };
-            if let Err(e) = self.peer.request_block(&req).await {
+            let mut buf = Vec::new();
+            buf.extend_from_slice(&(self.task.piece_i as u32).to_be_bytes());
+            buf.extend_from_slice(&(begin as u32).to_be_bytes());
+            buf.extend_from_slice(&(length as u32).to_be_bytes());
+            if let Err(e) = self
+                .peer
+                .send_message(&PeerMessage::Request(buf))
+                .await
+            {
                 log!(LogLevel::Error, "Failed to download: {}", e);
                 error_sender
                     .send(DownloadStatus::ChunksFail(self.task.clone()))
@@ -100,7 +95,10 @@ impl DownloadReq {
         log!(LogLevel::Debug, "Sended all requests");
         if let Err(e) = self
             .peer
-            .receive_block(self.task.clone(), data_sender)
+            .wait_for_msg(
+                &PeerMessage::Piece(Vec::new()),
+                (self.task.chunks.end - self.task.chunks.start) as u32,
+            )
             .await
         {
             log!(LogLevel::Error, "Failed to download: {}", e);
