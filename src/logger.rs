@@ -58,7 +58,7 @@ impl Logger {
             .expect("cannot open log file");
 
         log_file
-            .write_all(format!("{} {:5} - {}\n", timestamp, log_level, msg).as_bytes())
+            .write_all(format!("{} {:5} {:?} - {}\n", timestamp, log_level, tokio::task::try_id(), msg).as_bytes())
             .expect("write to log file failed");
         if let LogLevel::Info = log_level {
             println!("{msg}");

@@ -66,6 +66,7 @@ impl TrackerReq {
         };
         log!(LogLevel::Debug, "Got valid response");
         let peers_n = peers_bytes.len() / 6;
+        log!(LogLevel::Debug, "Found {peers_n} peer(s)");
         let mut peers = Vec::new();
         for i in 0..peers_n {
             peers.push(format!(

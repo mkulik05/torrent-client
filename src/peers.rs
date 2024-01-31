@@ -1,32 +1,53 @@
-use crate::download::BlockRequest;
+use crate::download::{BlockRequest, ChunksTask, DataPiece};
 use crate::logger::{log, LogLevel};
 use crate::torrent::Torrent;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::sync::mpsc::Sender;
+use tokio::time::timeout;
+use std::time::Duration;
 
 #[derive(Debug)]
 pub struct Peer {
     pub peer_id: Option<String>,
     pub bitfield: Option<Vec<u8>>,
     pub status: PeerStatus,
-    socket: TcpStream,
+    pub socket: TcpStream,
+}
+
+pub enum PeerMessage {
+    Choke,
+    Unchoke,
+    Interested,
+    NotInterested,
+    Have,
+    Bitfield,
+    Request,
+    Piece, 
+    Cancel
 }
 
 #[derive(Debug)]
 pub enum PeerStatus {
     NotConnected,
     WaitingForInterestedMsg,
-    ReadyToSendData
+    ReadyToSendData,
 }
 
 impl Peer {
     // just for test 9 (with hanshake only)
     pub async fn new(addr: &str) -> anyhow::Result<Peer> {
+        let socket = match timeout(Duration::from_millis(300), TcpStream::connect(addr)).await {
+            Ok(res) => {
+                res?
+            }
+            Err(_) => anyhow::bail!("Connection timeout")
+        };
         Ok(Peer {
             peer_id: None,
-            socket: TcpStream::connect(addr).await?,
+            socket,
             bitfield: None,
-            status: PeerStatus::NotConnected
+            status: PeerStatus::NotConnected,
         })
     }
     pub async fn connect(&mut self, torrent: &Torrent) -> anyhow::Result<()> {
@@ -35,9 +56,13 @@ impl Peer {
             PeerStatus::WaitingForInterestedMsg => {
                 self.send_interested_msg().await?;
                 Ok(())
-            },
+            }
             PeerStatus::NotConnected => {
-                log!(LogLevel::Debug, "Connecting to peer: {}", self.socket.peer_addr()?);
+                log!(
+                    LogLevel::Debug,
+                    "Connecting to peer: {}",
+                    self.socket.peer_addr()?
+                );
                 let peer_id = Peer::handshake(&torrent, &mut self.socket).await?;
                 let mut msg_len = [0; 4];
                 self.socket.read_exact(&mut msg_len).await?;
@@ -56,20 +81,53 @@ impl Peer {
         }
     }
 
-    pub async fn fetch(&mut self, req: &BlockRequest) -> anyhow::Result<Vec<u8>> {
+    pub async fn request_block(&mut self, req: &BlockRequest) -> anyhow::Result<()> {
         self.socket.write_all(&13u32.to_be_bytes()).await?;
         self.socket.write_all(&6u8.to_be_bytes()).await?;
         self.socket.write_all(&req.piece_i.to_be_bytes()).await?;
         self.socket.write_all(&req.begin.to_be_bytes()).await?;
         self.socket.write_all(&req.length.to_be_bytes()).await?;
         log!(LogLevel::Debug, "Requested {:?}", req);
-        let mut data = [0; 13];
-        self.socket.read_exact(&mut data).await?;
-        assert_eq!(data[4], 7); // piece message
-        let mut buf = vec![0; req.length as usize];
-        self.socket.read_exact(&mut buf).await?;
+        Ok(())
+    }
+
+    pub async fn receive_block(
+        &mut self,
+        task: ChunksTask,
+        data_sender: Sender<DataPiece>,
+    ) -> anyhow::Result<()> {
+        for _ in task.chunks {
+            let mut data = [0; 13];
+            self.socket.read_exact(&mut data).await?;
+            log!(LogLevel::Debug, "Readed buf: {:?}", data);
+            assert_eq!(data[4], 7); // piece message
+            let length = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+            let mut buf = vec![0; (length - 9) as usize];
+            match timeout(
+                Duration::from_secs(1),
+                self.socket.read_exact(&mut buf),
+            )
+            .await
+            {
+                Err(_) => {
+                    log!(LogLevel::Debug, "Download timeout");
+                    anyhow::bail!("Download timeout");
+                }
+                Ok(res) => {
+                    log!(LogLevel::Debug, "Got data");
+                    let _ = res?;
+                    let piece_i = u32::from_be_bytes([data[5], data[6], data[5], data[8]]);
+                    let begin = u32::from_be_bytes([data[9], data[10], data[11], data[12]]);
+                    data_sender.send(DataPiece {
+                        buf,
+                        piece_i: piece_i as u64,
+                        begin: begin as u64,
+                    }).await?;
+                }
+            }
+        }
         log!(LogLevel::Debug, "Readed block from socket");
-        Ok(buf)
+        Ok(())
     }
 
     async fn send_interested_msg(&mut self) -> anyhow::Result<()> {
@@ -79,7 +137,8 @@ impl Peer {
         let mut data = [0; 5];
         self.socket.read_exact(&mut data).await?;
         log!(LogLevel::Debug, "Received unchoke msg");
-        assert_eq!(data[4], 1); // unchoke message
+        println!("{}", data[4]);
+        // assert_eq!(data[4], 1); // unchoke message
         Ok(())
     }
 

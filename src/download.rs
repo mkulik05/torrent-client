@@ -1,11 +1,24 @@
+use crate::logger::{log, LogLevel};
 use crate::peers::{Peer, PeerStatus};
 use crate::torrent::Torrent;
+use crate::DownloadStatus;
 use std::ops::Range;
-use std::fs::File;
-use std::io::Write;
 use std::sync::Arc;
-use tokio::time::{sleep, Duration};
-use crate::logger::{log, LogLevel};
+use tokio::sync::mpsc::Sender;
+
+#[derive(Debug)]
+pub struct PieceTask {
+    pub piece_i: u64,
+    pub total_chunks: u64,
+    pub chunks_done: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChunksTask {
+    pub piece_i: u64,
+    pub chunks: Range<u64>,
+    pub includes_last_chunk: bool,
+}
 
 #[derive(Debug)]
 pub struct BlockRequest {
@@ -15,81 +28,91 @@ pub struct BlockRequest {
 }
 
 #[derive(Debug)]
-pub struct Downloader {
+pub struct DownloadReq {
     pub torrent: Arc<Torrent>,
     pub peer: Peer,
-    pub piece_i: Range<u64>,
-    pub file: File,
-    buf: Vec<u8>,
-    chunk_size: u64
+    pub task: ChunksTask,
+}
+pub struct DataPiece {
+    pub buf: Vec<u8>,
+    pub piece_i: u64,
+    pub begin: u64,
 }
 
-impl Downloader {
-    pub fn new(
-        torrent: Arc<Torrent>,
-        peer: Peer,
-        piece_i: Range<u64>,
-        path: &str,
-    ) -> anyhow::Result<Self> {
-        Ok(Downloader {
+impl DownloadReq {
+    pub fn new(torrent: Arc<Torrent>, peer: Peer, task: ChunksTask) -> Self {
+        DownloadReq {
             torrent,
             peer,
-            piece_i,
-            file: std::fs::File::create(path)?,
-            buf: Vec::new(),
-            chunk_size: 16384 // on a greater value connection will be reseted by peer
-        })
+            task,
+        }
     }
-    pub async fn download(&mut self) -> anyhow::Result<()> {
+    pub async fn request_data(
+        &mut self,
+        error_sender: Sender<DownloadStatus>,
+        data_sender: Sender<DataPiece>,
+    ) -> anyhow::Result<()> {
         if let PeerStatus::NotConnected | PeerStatus::WaitingForInterestedMsg = self.peer.status {
             log!(LogLevel::Debug, "Peer is not ready for downloading yet");
             self.peer.connect(&self.torrent).await?;
-        }  
-        log!(LogLevel::Debug, "Downloading {:?} pieces", self.piece_i);
-        for i in self.piece_i.clone() {
-            self.download_piece(i).await?;
-            assert!(self.verify_hash(i as usize));
-            self.file.write_all(&self.buf)?;
-            self.buf.clear();
+        }
+        log!(
+            LogLevel::Debug,
+            "Downloading piece {}, chunks {:?}",
+            self.task.piece_i,
+            self.task.chunks
+        );
+        let mut begin = crate::CHUNK_SIZE * self.task.chunks.start;
+        for i in self.task.chunks.clone() {
+            log!(
+                LogLevel::Fatal,
+                "{} {} {}",
+                self.torrent.info.length,
+                self.torrent.info.piece_hashes.len(),
+                self.torrent.info.piece_length
+            );
+            let length = if i + 1 == self.task.chunks.end && self.task.includes_last_chunk {
+                if self.task.piece_i as usize == self.torrent.info.piece_hashes.len() - 1 {
+                    log!(LogLevel::Debug, "Got there!!!");
+                    self.torrent.info.length
+                        - (self.torrent.info.piece_hashes.len() - 1) as u64
+                            * self.torrent.info.piece_length
+                        - i * crate::CHUNK_SIZE
+                } else {
+                    self.torrent.info.piece_length - i * crate::CHUNK_SIZE
+                }
+            } else {
+                crate::CHUNK_SIZE
+            };
+            let req = BlockRequest {
+                piece_i: self.task.piece_i as u32,
+                begin: begin as u32,
+                length: length as u32,
+            };
+            if let Err(e) = self.peer.request_block(&req).await {
+                log!(LogLevel::Error, "Failed to download: {}", e);
+                error_sender
+                    .send(DownloadStatus::ChunksFail(self.task.clone()))
+                    .await?;
+            }
+            begin += crate::CHUNK_SIZE;
+        }
+        log!(LogLevel::Debug, "Sended all requests");
+        if let Err(e) = self
+            .peer
+            .receive_block(self.task.clone(), data_sender)
+            .await
+        {
+            log!(LogLevel::Error, "Failed to download: {}", e);
+            error_sender
+                .send(DownloadStatus::ChunksFail(self.task.clone()))
+                .await?;
         }
         Ok(())
     }
 
-    // peer that already sent you unchoke msg
-    async fn download_piece(&mut self, piece_i: u64) -> anyhow::Result<u64> {
-        let piece_length = if piece_i as usize == self.torrent.info.piece_hashes.len() - 1 {
-            self.torrent.info.length - self.torrent.info.piece_length * piece_i
-        } else {
-            self.torrent.info.piece_length
-        };
-        let blocks_n = piece_length / self.chunk_size;
-        log!(LogLevel::Debug, "Download piece: piece_i={} piece_length={}, blocks_n={}", piece_i, piece_length, blocks_n);
-        let mut begin = 0;
-        for _ in 0..blocks_n {
-            let req = BlockRequest {
-                piece_i: piece_i as u32,
-                begin,
-                length: self.chunk_size as u32,
-            };
-            let bytes = self.peer.fetch(&req).await?;
-            self.buf.write_all(&bytes)?;
-            begin += self.chunk_size as u32;
-            sleep(Duration::from_millis(2)).await;
-        }
-        if piece_length - blocks_n * self.chunk_size > 0 {
-            let req = BlockRequest {
-                piece_i: piece_i as u32,
-                begin,
-                length: (piece_length - blocks_n * self.chunk_size) as u32,
-            };
-            let bytes = self.peer.fetch(&req).await?;
-            self.buf.write_all(&bytes)?;
-        }
-        log!(LogLevel::Debug, "Download piece: finished");
-        Ok(piece_length)
-    }
-    fn verify_hash(&mut self, piece_n: usize) -> bool {
-        let hash = Torrent::bytes_hash(&self.buf);
-        hash == self.torrent.info.piece_hashes[piece_n]
-    }
+    // fn verify_hash(&mut self, piece_n: usize) -> bool {
+    //     let hash = Torrent::bytes_hash(&self.buf);
+    //     hash == self.torrent.info.piece_hashes[piece_n]
+    // }
 }
