@@ -22,12 +22,13 @@ use torrent::Torrent;
 use tracker::TrackerReq;
 
 const MAX_CHUNKS_TASKS: usize = 100;
-const CHUNKS_PER_TASK: u64 = 50;
+const CHUNKS_PER_TASK: u64 = 10;
 const CHUNK_SIZE: u64 = 16384;
 
 enum DownloadStatus {
     ChunksFail(ChunksTask),
     InvalidHash(u64),
+    PeerFreed(Peer),
     Finished,
 }
 
@@ -44,7 +45,7 @@ impl PieceChunksBitmap {
         } else {
             torrent.info.piece_length
         };
-        let chunks_n = (piece_length as f64 / crate::CHUNK_SIZE as f64).ceil() as u64;
+        let chunks_n = (piece_length as f64 / crate::CHUNK_SIZE as f64).ceil() as i32;
         let mut mask = 128;
         for _ in 0..(chunks_n % 8 - 1) {
             mask |= mask >> 1;
@@ -241,10 +242,8 @@ async fn main() {
             }
 
             for peer in tracker_resp.peers {
-                if let Ok(mut peer) = Peer::new(&peer, send_data.clone()).await {
-                    if let Ok(()) = peer.connect(&torrent).await {
-                        peers.push(peer);
-                    }
+                if let Ok(peer) = Peer::new(&peer, send_data.clone()).await {
+                    peers.push(Some(peer));
                 }
             }
             log!(LogLevel::Info, "Connected to {} peer(s)", peers.len());
@@ -267,13 +266,21 @@ async fn main() {
                     chunks_done: 0,
                 })
             }
-            log!(LogLevel::Debug, "{:?}", pieces_tasks);
             add_chunks_tasks(&mut pieces_tasks, &mut chunks_tasks, MAX_CHUNKS_TASKS - 1);
-            log!(LogLevel::Debug, "{:?}", chunks_tasks);
-            let semaphore = Arc::new(Semaphore::new(3));
+            let semaphore = Arc::new(Semaphore::new(peers.len()));
+            let mut no_free_peers = false;
             loop {
-                let download_status = get_status.try_recv();
-                if let Ok(download_status) = download_status {
+                let download_status = if no_free_peers {
+                    get_status.recv().await
+                } else {
+                    let download_status = get_status.try_recv();
+                    if let Ok(val) = download_status {
+                        Some(val)
+                    } else {
+                        None
+                    }
+                };
+                if let Some(download_status) = download_status {
                     match download_status {
                         DownloadStatus::Finished => break,
                         DownloadStatus::InvalidHash(piece_i) => {
@@ -298,7 +305,16 @@ async fn main() {
                             })
                         }
                         DownloadStatus::ChunksFail(chunk) => {
-                            chunks_tasks.push_back(chunk);
+                            chunks_tasks.push_front(chunk);
+                        }
+                        DownloadStatus::PeerFreed(peer) => {
+                            no_free_peers = false;
+                            let pos = peers.iter().position(|x| x.is_none());
+                            if let Some(i) = pos {
+                                peers[i] = Some(peer);
+                            } else {
+                                peers.push(Some(peer))
+                            }
                         }
                     }
                 }
@@ -309,13 +325,41 @@ async fn main() {
                     let send_status = send_status.clone();
                     let send_data = send_data.clone();
                     let task = chunks_tasks.pop_front().unwrap();
-                    let mut downloader = DownloadReq::new(torrent.clone(), peers.remove(0), task);
-                    peers.push(handle_result(
-                        Peer::new(&downloader.peer.socket.peer_addr().unwrap().to_string(), send_data.clone()).await,
-                    ));
+                    let some_pos = peers.iter().position(|x| x.is_some());
+                    let some_pos = if some_pos.is_none() {
+                        log!(LogLevel::Debug, "No free peers, skipping iteration");
+                        no_free_peers = true;
+                        continue;
+                    } else {
+                        some_pos.unwrap()
+                    };
+                    let peer = peers[some_pos].take().unwrap();
+                    // if !peer.have_piece(task.piece_i as usize) {
+                    //     peers[some_pos] = Some(peer);
+                    //     let peers_len = peers.len();
+                    //     peers.swap(some_pos, peers_len - 1);
+                    //     chunks_tasks.push_front(task);
+                    //     continue;
+                    // }
+                    let downloader = DownloadReq::new(torrent.clone(), peer, task);
                     tokio::spawn(async move {
                         log!(LogLevel::Debug, "Curr task: {:?}", downloader.task);
-                        handle_result(downloader.request_data(send_status).await);
+                        let task = downloader.task.clone();
+                        let addr = downloader.peer.peer_addr.clone();
+                        let send_status2 = send_status.clone();
+                        if let Err(e) = downloader.request_data(send_status).await {
+                            log!(LogLevel::Error, "Request data error: {}, peer addr {}", e, addr);
+                            send_status2
+                                .send(DownloadStatus::ChunksFail(task))
+                                .await
+                                .unwrap();
+                            send_status2
+                                .send(DownloadStatus::PeerFreed(
+                                    Peer::new(&addr, send_data).await.unwrap(),
+                                ))
+                                .await
+                                .unwrap();
+                        };
                         drop(permit);
                     });
                 }
