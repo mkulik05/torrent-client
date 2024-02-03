@@ -109,11 +109,12 @@ impl DownloadReq {
             .await
         {
             log!(LogLevel::Error, "Failed to download: {}, peer: {}", e, self.peer.peer_addr);
-            error_sender.send(DownloadStatus::PeerFreed(self.peer)).await?;
             error_sender
                 .send(DownloadStatus::ChunksFail(self.task.clone()))
                 .await?;
-        }
+        } 
+        log!(LogLevel::Debug, "downloaded");
+        error_sender.send(DownloadStatus::PeerFreed(self.peer)).await?;
         Ok(())
     }
 }

@@ -7,6 +7,8 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc::Sender;
 use tokio::time::timeout;
 
+const MAX_INTERESTED_ATTEMPTS: u8 = 3;
+
 #[derive(Debug)]
 pub struct Peer {
     pub peer_id: Option<String>,
@@ -78,11 +80,23 @@ impl Peer {
         match self.status {
             PeerStatus::Unchoked => Ok(()),
             PeerStatus::Choked => {
-                self.send_message(&PeerMessage::Interested).await?;
-                self.send_message(&PeerMessage::Interested).await?;
-                self.send_message(&PeerMessage::Interested).await?;
-                self.wait_for_msg(&PeerMessage::Unchoke, 1, Some(Duration::from_secs(60)))
-                    .await?;
+                let mut timeout = 20;
+                let mut attempts_n = 0;
+                while attempts_n < MAX_INTERESTED_ATTEMPTS {
+                    self.send_message(&PeerMessage::Interested).await?;
+                    let res = self
+                        .wait_for_msg(&PeerMessage::Unchoke, 1, Some(Duration::from_secs(timeout)))
+                        .await;
+                    if let Err(ref e) = res {
+                        if e.to_string() != "Timeout Error!!!" {
+                            res?
+                        }
+                    } else {
+                        break;
+                    }
+                    attempts_n += 1;
+                    timeout += 20;
+                }
                 Ok(())
             }
             PeerStatus::NotConnected => {
@@ -92,11 +106,24 @@ impl Peer {
                     self.socket.peer_addr()?
                 );
                 self.peer_id = Some(self.handshake(&torrent).await?);
-                self.send_message(&PeerMessage::Interested).await?;
-                self.send_message(&PeerMessage::Interested).await?;
-                self.send_message(&PeerMessage::Interested).await?;
-                self.wait_for_msg(&PeerMessage::Unchoke, 1, Some(Duration::from_secs(60)))
-                    .await?;
+                let mut timeout = 20;
+                let mut attempts_n = 0;
+                while attempts_n < MAX_INTERESTED_ATTEMPTS {
+                    log!(LogLevel::Debug, "Attempt {}", attempts_n + 1);
+                    self.send_message(&PeerMessage::Interested).await?;
+                    let res = self
+                        .wait_for_msg(&PeerMessage::Unchoke, 1, Some(Duration::from_secs(timeout)))
+                        .await;
+                    if let Err(ref e) = res {
+                        if e.to_string() != "Timeout Error!!!" {
+                            res?
+                        }
+                    } else {
+                        break;
+                    }
+                    attempts_n += 1;
+                    timeout += 20;
+                }
                 Ok(())
             }
         }
@@ -163,10 +190,10 @@ impl Peer {
                     anyhow::bail!("Peer choked");
                 }
                 PeerMessage::Interested | PeerMessage::Request(_) => {
-                    self.send_message(&PeerMessage::Choke).await?;
+                    // self.send_message(&PeerMessage::Choke).await?;
                 }
                 PeerMessage::KeepAlive => {
-                    self.send_message(&PeerMessage::KeepAlive).await?;
+                    // self.send_message(&PeerMessage::KeepAlive).await?;
                 }
                 _ => {}
             }
@@ -184,32 +211,36 @@ impl Peer {
         log!(LogLevel::Debug, "Sended msg {}", msg);
         match msg {
             PeerMessage::Interested => {
-                self.socket.write_all(&1u32.to_be_bytes()).await?;
-                self.socket.write_all(&2u8.to_be_bytes()).await?;
+                let mut buf = Vec::new();
+                buf.extend_from_slice(&1u32.to_be_bytes());
+                buf.extend_from_slice(&2u8.to_be_bytes());
+                self.socket.write_all(&buf).await?;
             }
-            PeerMessage::Request(buf) => {
-                self.socket
-                    .write_all(&((1 + buf.len()) as u32).to_be_bytes())
-                    .await?;
-                self.socket.write_all(&6u8.to_be_bytes()).await?;
-                self.socket.write_all(buf).await?;
+            PeerMessage::Request(req) => {
+                let mut buf = Vec::new();
+                buf.extend_from_slice(&((1 + req.len()) as u32).to_be_bytes());
+                buf.extend_from_slice(&6u8.to_be_bytes());
+                buf.extend_from_slice(req);
+                self.socket.write_all(&buf).await?;
             }
             PeerMessage::Choke => {
-                self.socket.write_all(&1u32.to_be_bytes()).await?;
-                self.socket.write_all(&0u8.to_be_bytes()).await?;
+                let mut buf = Vec::new();
+                buf.extend_from_slice(&1u32.to_be_bytes());
+                buf.extend_from_slice(&0u8.to_be_bytes());
+                self.socket.write_all(&buf).await?;
             }
             PeerMessage::KeepAlive => {
                 self.socket.write_all(&0u32.to_be_bytes()).await?;
             }
-            PeerMessage::Bitfield(buf) => {
-                self.socket
-                    .write_all(&((1 + buf.len()) as u32).to_be_bytes())
-                    .await?;
-                self.socket.write_all(&5u8.to_be_bytes()).await?;
-                self.socket.write_all(buf).await?;
+            PeerMessage::Bitfield(bitfield) => {
+                let mut buf = Vec::new();
+                buf.extend_from_slice(&((1 + bitfield.len()) as u32).to_be_bytes());
+                buf.extend_from_slice(&5u8.to_be_bytes());
+                buf.extend_from_slice(bitfield);
+                self.socket.write_all(&buf).await?;
             }
             _ => {
-                panic!("Unimplemented msg to send: {:?}", msg)
+                panic!("Unimplemented msg to send: {}", msg)
             }
         }
         Ok(())
@@ -274,7 +305,7 @@ impl Peer {
         msg.extend_from_slice(b"BitTorrent protocol");
         msg.extend_from_slice(&[0; 8]);
         msg.extend_from_slice(&torrent.info_hash);
-        msg.extend_from_slice(b"00112239715566770099");
+        msg.extend_from_slice(b"00112353448866770099");
         self.socket.write_all(&msg).await?;
         log!(LogLevel::Debug, "Sended handskake");
         let mut response = [0; 68];
@@ -289,5 +320,4 @@ impl Peer {
         .await?;
         Ok(hex::encode(peer_id))
     }
-
 }
