@@ -228,6 +228,7 @@ impl Peer {
         }
         Ok(())
     }
+    
     async fn receive_message(&mut self) -> anyhow::Result<PeerMessage> {
         let mut data = [0; 5]; // length + msg type
         self.socket.read_exact(&mut data).await?;

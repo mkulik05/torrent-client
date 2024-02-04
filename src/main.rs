@@ -23,8 +23,8 @@ use tokio::sync::Semaphore;
 use torrent::Torrent;
 use tracker::TrackerReq;
 
+const CHUNKS_PER_TASK: u64 = 30;
 const MAX_CHUNKS_TASKS: usize = 100;
-const CHUNKS_PER_TASK: u64 = 10;
 const CHUNK_SIZE: u64 = 16384;
 const SEMAPHORE_N: usize = 10;
 
@@ -49,11 +49,11 @@ impl PieceChunksBitmap {
             torrent.info.piece_length
         };
         let chunks_n = (piece_length as f64 / crate::CHUNK_SIZE as f64).ceil() as i32;
-        let mut last_chunk_mask = 0xff;
-        let mut mask = 1;
-        for _ in 0..(chunks_n % 8 - 1) {
-            mask <<= 1;
-            last_chunk_mask ^= mask;
+        let mut last_chunk_mask = 0;
+        let mut mask = 128;
+        for _ in 0..(chunks_n % 8) {
+            last_chunk_mask |= mask;
+            mask >>= 1;
         }
         PieceChunksBitmap {
             bitmap: vec![0; (chunks_n as f64 / 8.0).ceil() as usize],
@@ -104,7 +104,7 @@ fn add_chunks_tasks(
     pieces_tasks: &mut VecDeque<PieceTask>,
     chunks_tasks: &mut VecDeque<ChunksTask>,
     chunks_to_add: usize,
-) {
+) { 
     for _ in 0..chunks_to_add {
         if pieces_tasks.is_empty() {
             break;
@@ -163,7 +163,7 @@ async fn main() {
             let tracker_req = TrackerReq::init(&torrent);
             let tracker_resp = handle_result(tracker_req.send(&torrent).await);
             let torrent = Arc::new(torrent);
-            let (send_status, mut get_status) = mpsc::channel(50);
+            let (send_status, mut get_status) = mpsc::channel(270);
             let (send_data, mut get_data) = mpsc::channel::<DataPiece>(50);
             let mut peers = Vec::new();
 
@@ -381,17 +381,7 @@ async fn main() {
                         }
                         DownloadEvents::ChunksFail(chunk) => {
                             log!(LogLevel::Debug, "chunk failed: {:?}", chunk);
-                            log!(
-                                LogLevel::Debug,
-                                "[0] Chunks tasks: {:?}",
-                                &Vec::from(chunks_tasks.clone())[0..10]
-                            );
                             chunks_tasks.push_front(chunk);
-                            log!(
-                                LogLevel::Debug,
-                                "[1] Chunks tasks: {:?}",
-                                &Vec::from(chunks_tasks.clone())[0..10]
-                            );
                         }
                         DownloadEvents::PeerAdd(peer) => {
                             no_free_peers = false;
@@ -406,11 +396,6 @@ async fn main() {
                 }
 
                 add_chunks_tasks(&mut pieces_tasks, &mut chunks_tasks, 1);
-                log!(
-                    LogLevel::Debug,
-                    "[2] Chunks tasks: {:?}",
-                    &Vec::from(chunks_tasks.clone())[0..10]
-                );
                 if !chunks_tasks.is_empty() {
                     let permit = semaphore.clone().acquire_owned().await.unwrap();
                     let send_status = send_status.clone();

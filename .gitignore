@@ -12,3 +12,7 @@ target/
 log*.txt
 
 *.pcapng
+
+*svg
+
+perf*
