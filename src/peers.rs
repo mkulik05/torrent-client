@@ -61,9 +61,8 @@ pub enum PeerStatus {
 }
 
 impl Peer {
-    // just for test 9 (with hanshake only)
-    pub async fn new(addr: &str, data_sender: Sender<DataPiece>) -> anyhow::Result<Peer> {
-        let socket = match timeout(Duration::from_millis(1000), TcpStream::connect(addr)).await {
+    pub async fn new(addr: &str, data_sender: Sender<DataPiece>, dur: Duration) -> anyhow::Result<Peer> {
+        let socket = match timeout(dur, TcpStream::connect(addr)).await {
             Ok(res) => res?,
             Err(_) => anyhow::bail!("Connection timeout"),
         };
@@ -78,27 +77,7 @@ impl Peer {
     }
     pub async fn connect(&mut self, torrent: &Torrent) -> anyhow::Result<()> {
         match self.status {
-            PeerStatus::Unchoked => Ok(()),
-            PeerStatus::Choked => {
-                let mut timeout = 20;
-                let mut attempts_n = 0;
-                while attempts_n < MAX_INTERESTED_ATTEMPTS {
-                    self.send_message(&PeerMessage::Interested).await?;
-                    let res = self
-                        .wait_for_msg(&PeerMessage::Unchoke, 1, Some(Duration::from_secs(timeout)))
-                        .await;
-                    if let Err(ref e) = res {
-                        if e.to_string() != "Timeout Error!!!" {
-                            res?
-                        }
-                    } else {
-                        break;
-                    }
-                    attempts_n += 1;
-                    timeout += 20;
-                }
-                Ok(())
-            }
+            PeerStatus::Unchoked => return Ok(()),
             PeerStatus::NotConnected => {
                 log!(
                     LogLevel::Debug,
@@ -106,26 +85,30 @@ impl Peer {
                     self.socket.peer_addr()?
                 );
                 self.peer_id = Some(self.handshake(&torrent).await?);
-                let mut timeout = 20;
-                let mut attempts_n = 0;
-                while attempts_n < MAX_INTERESTED_ATTEMPTS {
-                    log!(LogLevel::Debug, "Attempt {}", attempts_n + 1);
-                    self.send_message(&PeerMessage::Interested).await?;
-                    let res = self
-                        .wait_for_msg(&PeerMessage::Unchoke, 1, Some(Duration::from_secs(timeout)))
-                        .await;
-                    if let Err(ref e) = res {
-                        if e.to_string() != "Timeout Error!!!" {
-                            res?
-                        }
-                    } else {
-                        break;
-                    }
-                    attempts_n += 1;
-                    timeout += 20;
+            },
+            PeerStatus::Choked => {}
+        }
+        let mut timeout = 1;
+        let mut attempts_n = 0;
+        while attempts_n < MAX_INTERESTED_ATTEMPTS {
+            self.send_message(&PeerMessage::Interested).await?;
+            let res = self
+                .wait_for_msg(&PeerMessage::Unchoke, 1, Some(Duration::from_secs(timeout)))
+                .await;
+            if let Err(ref e) = res {
+                if e.to_string() != "Timeout Error!!!" {
+                    res?
                 }
-                Ok(())
+            } else {
+                break;
             }
+            attempts_n += 1;
+            timeout += 3;
+        }
+        if let PeerStatus::Unchoked = self.status {
+            Ok(())
+        } else {
+            anyhow::bail!("Failed to unchoke peer");
         }
     }
 

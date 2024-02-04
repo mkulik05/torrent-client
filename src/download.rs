@@ -1,10 +1,11 @@
 use crate::logger::{log, LogLevel};
 use crate::peers::{Peer, PeerMessage, PeerStatus};
 use crate::torrent::Torrent;
-use crate::DownloadStatus;
+use crate::DownloadEvents;
 use std::io::ErrorKind;
 use std::ops::Range;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc::Sender;
 
 #[derive(Debug)]
@@ -43,7 +44,7 @@ impl DownloadReq {
     }
     pub async fn request_data(
         mut self,
-        error_sender: Sender<DownloadStatus>,
+        error_sender: Sender<DownloadEvents>,
     ) -> anyhow::Result<()> {
         if let PeerStatus::NotConnected | PeerStatus::Choked = self.peer.status {
             log!(LogLevel::Debug, "Peer is not ready for downloading yet");
@@ -79,19 +80,19 @@ impl DownloadReq {
                 match e.downcast_ref::<std::io::Error>() {
                     Some(e) => {
                         if e.kind() == ErrorKind::BrokenPipe {
-                            let peer = Peer::new(&self.peer.peer_addr, self.peer.data_sender).await?;
+                            let peer = Peer::new(&self.peer.peer_addr, self.peer.data_sender, Duration::from_secs(2)).await?;
                             log!(LogLevel::Debug, "Reconnected to peer");
-                            error_sender.send(DownloadStatus::PeerFreed(peer)).await?;
+                            error_sender.send(DownloadEvents::PeerAdd(peer)).await?;
                         } else {
-                            error_sender.send(DownloadStatus::PeerFreed(self.peer)).await?;
+                            error_sender.send(DownloadEvents::PeerAdd(self.peer)).await?;
                         }
                     },
                     None => {
-                        error_sender.send(DownloadStatus::PeerFreed(self.peer)).await?;
+                        error_sender.send(DownloadEvents::PeerAdd(self.peer)).await?;
                     }  
                 }
                 error_sender
-                    .send(DownloadStatus::ChunksFail(self.task.clone()))
+                    .send(DownloadEvents::ChunksFail(self.task.clone()))
                     .await?;
                 return Ok(());
             }
@@ -110,11 +111,12 @@ impl DownloadReq {
         {
             log!(LogLevel::Error, "Failed to download: {}, peer: {}", e, self.peer.peer_addr);
             error_sender
-                .send(DownloadStatus::ChunksFail(self.task.clone()))
+                .send(DownloadEvents::ChunksFail(self.task.clone()))
                 .await?;
-        } 
-        log!(LogLevel::Debug, "downloaded");
-        error_sender.send(DownloadStatus::PeerFreed(self.peer)).await?;
+        } else {
+            log!(LogLevel::Debug, "downloaded");
+        }
+        error_sender.send(DownloadEvents::PeerAdd(self.peer)).await?;
         Ok(())
     }
 }
