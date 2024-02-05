@@ -22,6 +22,7 @@ use tokio::sync::mpsc;
 use tokio::sync::Semaphore;
 use torrent::Torrent;
 use tracker::TrackerReq;
+use tokio::time::timeout;
 
 const CHUNKS_PER_TASK: u64 = 30;
 const MAX_CHUNKS_TASKS: usize = 100;
@@ -164,31 +165,16 @@ async fn main() {
         "download" => {
             let torrent = handle_result(Torrent::new(&args[4]));
             let tracker_req = TrackerReq::init(&torrent);
-            let tracker_resp = handle_result(tracker_req.send(&torrent).await);
+            let tracker_resp = Arc::new(handle_result(tracker_req.send(&torrent).await));
             let torrent = Arc::new(torrent);
             let (send_status, mut get_status) = mpsc::channel(270);
             let (send_data, mut get_data) = mpsc::channel::<DataPiece>(50);
             let mut peers = Vec::new();
 
-            // Discover task - found working peers, sep task to immidiatly
-            // start working with discovered peers
-            {
-                let send_status = send_status.clone();
-                let send_data = send_data.clone();
-                tokio::spawn(async move {
-                    let mut n = 0;
-                    for peer in tracker_resp.peers {
-                        if let Ok(peer) = Peer::new(&peer, send_data.clone(), Duration::from_secs(2)).await {
-                            n += 1;
-                            send_status
-                                .send(DownloadEvents::PeerAdd(peer))
-                                .await
-                                .unwrap();
-                        }
-                    }
-                    log!(LogLevel::Info, "Connected to {} peer(s)", n);
-                });
-            }
+
+            // tokio task spawns inside
+            tracker_resp.clone().find_working_peers(send_data.clone(), send_status.clone()); 
+            
 
             let mut pieces_done = Vec::new();
             if std::path::Path::new(&args[3]).exists() {
@@ -349,7 +335,14 @@ async fn main() {
             let mut no_free_peers = false;
             loop {
                 let download_status = if no_free_peers {
-                    get_status.recv().await
+                    let res = timeout(Duration::from_secs(20), get_status.recv()).await;
+                    match res {
+                        Err(_) => {
+                            tracker_resp.clone().find_working_peers(send_data.clone(), send_status.clone());
+                            continue;
+                        },
+                        Ok(value) => {value}
+                    } 
                 } else {
                     let download_status = get_status.try_recv();
                     if let Ok(val) = download_status {
@@ -413,13 +406,13 @@ async fn main() {
                     };
                     let peer = peers[some_pos].take().unwrap();
                     let task = chunks_tasks.pop_front().unwrap();
-                    // if !peer.have_piece(task.piece_i as usize) {
-                    //     peers[some_pos] = Some(peer);
-                    //     let peers_len = peers.len();
-                    //     peers.swap(some_pos, peers_len - 1);
-                    //     chunks_tasks.push_front(task);
-                    //     continue;
-                    // }
+                    if !peer.have_piece(task.piece_i as usize) {
+                        peers[some_pos] = Some(peer);
+                        let peers_len = peers.len();
+                        peers.swap(some_pos, peers_len - 1);
+                        chunks_tasks.push_front(task);
+                        continue;
+                    }
                     let downloader = DownloadReq::new(torrent.clone(), peer, task);
                     tokio::spawn(async move {
                         log!(LogLevel::Debug, "Peer {}, Curr task: {:?}", downloader.peer.peer_addr, downloader.task);

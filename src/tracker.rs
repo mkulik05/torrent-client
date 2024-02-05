@@ -1,6 +1,13 @@
+use tokio::sync::mpsc::Sender;
+
 use crate::bencode::BencodeValue;
+use crate::download::DataPiece;
 use crate::torrent::Torrent;
 use crate::logger::{log, LogLevel};
+use crate::peers::Peer;
+use crate::DownloadEvents;
+use std::time::Duration;
+use std::sync::Arc;
 
 pub struct TrackerReq {
     pub info_hash: String,
@@ -79,5 +86,25 @@ impl TrackerReq {
             ))
         }
         Ok(TrackerResp { interval, peers })
+    }
+}
+
+impl TrackerResp {
+    // Discover task - found working peers, sep task to immidiatly
+    // start working with discovered peers
+    pub fn find_working_peers (self: Arc<Self>, send_data: Sender<DataPiece>, send_status: Sender<DownloadEvents>) {
+        tokio::spawn(async move {
+            let mut n = 0;
+            for peer in self.peers.iter() {
+                if let Ok(peer) = Peer::new(&peer, send_data.clone(), Duration::from_secs(2)).await {
+                    n += 1;
+                    send_status
+                        .send(DownloadEvents::PeerAdd(peer))
+                        .await
+                        .unwrap();
+                }
+            }
+            log!(LogLevel::Info, "Connected to {} peer(s)", n);
+        });
     }
 }

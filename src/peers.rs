@@ -61,7 +61,11 @@ pub enum PeerStatus {
 }
 
 impl Peer {
-    pub async fn new(addr: &str, data_sender: Sender<DataPiece>, dur: Duration) -> anyhow::Result<Peer> {
+    pub async fn new(
+        addr: &str,
+        data_sender: Sender<DataPiece>,
+        dur: Duration,
+    ) -> anyhow::Result<Peer> {
         let socket = match timeout(dur, TcpStream::connect(addr)).await {
             Ok(res) => res?,
             Err(_) => anyhow::bail!("Connection timeout"),
@@ -84,7 +88,7 @@ impl Peer {
     }
     pub async fn connect(&mut self, torrent: &Torrent) -> anyhow::Result<()> {
         match self.status {
-            PeerStatus::Unchoked => return Ok(()),
+            PeerStatus::Unchoked => Ok(()),
             PeerStatus::NotConnected => {
                 log!(
                     LogLevel::Debug,
@@ -92,30 +96,33 @@ impl Peer {
                     self.socket.peer_addr()?
                 );
                 self.peer_id = Some(self.handshake(&torrent).await?);
-            },
-            PeerStatus::Choked => {}
-        }
-        let mut timeout = 1;
-        let mut attempts_n = 0;
-        while attempts_n < MAX_INTERESTED_ATTEMPTS {
-            self.send_message(&PeerMessage::Interested).await?;
-            let res = self
-                .wait_for_msg(&PeerMessage::Unchoke, 1, Some(Duration::from_secs(timeout)))
-                .await;
-            if let Err(ref e) = res {
-                if e.to_string() != "Timeout Error!!!" {
-                    res?
+                let mut timeout = 1;
+                let mut attempts_n = 0;
+                while attempts_n < MAX_INTERESTED_ATTEMPTS {
+                    self.send_message(&PeerMessage::Interested).await?;
+                    let res = self
+                        .wait_for_msg(&PeerMessage::Unchoke, 1, Some(Duration::from_secs(timeout)))
+                        .await;
+                    if let Err(ref e) = res {
+                        if e.to_string() != "Timeout Error!!!" {
+                            res?
+                        }
+                    } else {
+                        break;
+                    }
+                    attempts_n += 1;
+                    timeout += 3;
                 }
-            } else {
-                break;
+                if let PeerStatus::Unchoked = self.status {
+                    Ok(())
+                } else {
+                    anyhow::bail!("Failed to unchoke peer");
+                }
             }
-            attempts_n += 1;
-            timeout += 3;
-        }
-        if let PeerStatus::Unchoked = self.status {
-            Ok(())
-        } else {
-            anyhow::bail!("Failed to unchoke peer");
+            PeerStatus::Choked => {
+                self.reconnect(Duration::from_secs(2)).await?;
+                Ok(())
+            }
         }
     }
 
@@ -288,7 +295,8 @@ impl Peer {
             }
             mask & bitfield[bitfield_i] == mask
         } else {
-            false
+            // cause in the start bitfield is not inited
+            true
         }
     }
 
