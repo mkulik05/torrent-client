@@ -51,6 +51,9 @@ impl PieceChunksBitmap {
         let chunks_n = (piece_length as f64 / crate::CHUNK_SIZE as f64).ceil() as i32;
         let mut last_chunk_mask = 0;
         let mut mask = 128;
+        if chunks_n % 8 == 0 {
+            last_chunk_mask = 255;
+        }
         for _ in 0..(chunks_n % 8) {
             last_chunk_mask |= mask;
             mask >>= 1;

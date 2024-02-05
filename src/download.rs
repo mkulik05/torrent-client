@@ -110,7 +110,7 @@ impl DownloadReq {
                 return Ok(());
             }
             begin += crate::CHUNK_SIZE;
-            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+            // tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
         }
         log!(LogLevel::Debug, "Sended all requests");
         if let Err(e) = self
@@ -128,6 +128,13 @@ impl DownloadReq {
                 e,
                 self.peer.peer_addr
             );
+            if let Some(e) = e.downcast_ref::<std::io::Error>() {
+                log!(LogLevel::Debug, "error:kind : {}", e.kind());
+                if let ErrorKind::ConnectionRefused | ErrorKind::ConnectionReset | ErrorKind::NotConnected | ErrorKind::UnexpectedEof = e.kind() {
+                    self.peer.reconnect(Duration::from_secs(2)).await?;
+                }
+            }
+
             error_sender
                 .send(DownloadEvents::ChunksFail(self.task.clone()))
                 .await?;

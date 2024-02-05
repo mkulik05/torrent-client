@@ -75,6 +75,13 @@ impl Peer {
             status: PeerStatus::NotConnected,
         })
     }
+    pub async fn reconnect(&mut self, dur: Duration) -> anyhow::Result<()> {
+        self.socket = match timeout(dur, TcpStream::connect(&self.peer_addr)).await {
+            Ok(res) => res?,
+            Err(_) => anyhow::bail!("Connection timeout"),
+        };
+        Ok(())
+    }
     pub async fn connect(&mut self, torrent: &Torrent) -> anyhow::Result<()> {
         match self.status {
             PeerStatus::Unchoked => return Ok(()),
@@ -137,12 +144,14 @@ impl Peer {
                 PeerMessage::Have(n) => {
                     if let Some(ref mut bitfield) = self.bitfield {
                         let bitfield_i = n / 8;
-                        let bit_n = n as i32 % 8;
-                        let mut mask = 128;
-                        for _ in 0..(bit_n - 1) {
-                            mask >>= 1;
+                        if bitfield_i as usize <= bitfield.len() {
+                            let bit_n = n as i32 % 8;
+                            let mut mask = 128;
+                            for _ in 0..(bit_n - 1) {
+                                mask >>= 1;
+                            }
+                            bitfield[bitfield_i as usize] |= mask;
                         }
-                        bitfield[bitfield_i as usize] |= mask;
                     } else {
                         let bitfield_i = n / 8;
                         let bit_n = n as i32 % 8;
@@ -228,7 +237,7 @@ impl Peer {
         }
         Ok(())
     }
-    
+
     async fn receive_message(&mut self) -> anyhow::Result<PeerMessage> {
         let mut data = [0; 5]; // length + msg type
         self.socket.read_exact(&mut data).await?;
