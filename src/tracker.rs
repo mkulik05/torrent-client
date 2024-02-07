@@ -1,14 +1,13 @@
-use tokio::sync::mpsc::Sender;
-
 use crate::bencode::BencodeValue;
 use crate::download::DataPiece;
-use crate::torrent::Torrent;
 use crate::logger::{log, LogLevel};
 use crate::peers::Peer;
+use crate::torrent::Torrent;
 use crate::DownloadEvents;
-use std::time::Duration;
+use rand::distributions::{Alphanumeric, DistString};
 use std::sync::Arc;
-
+use std::time::Duration;
+use tokio::sync::mpsc::Sender;
 pub struct TrackerReq {
     pub info_hash: String,
     pub peer_id: String,
@@ -33,7 +32,7 @@ impl TrackerReq {
                 .iter()
                 .map(|b| format!("%{:02x}", b))
                 .collect(),
-            peer_id: "00112353448866770099".to_string(),
+            peer_id: Alphanumeric.sample_string(&mut rand::thread_rng(), 20),
             port: 6681,
             uploaded: 0,
             downloaded: 0,
@@ -52,8 +51,8 @@ impl TrackerReq {
         ];
         log!(LogLevel::Debug, "Sending tracker request");
         let client = reqwest::Client::builder()
-        .user_agent("my torrent")
-        .build()?;
+            .user_agent("my torrent")
+            .build()?;
         let body = client
             .get(format!(
                 "{}?info_hash={}",
@@ -92,11 +91,16 @@ impl TrackerReq {
 impl TrackerResp {
     // Discover task - found working peers, sep task to immidiatly
     // start working with discovered peers
-    pub fn find_working_peers (self: Arc<Self>, send_data: Sender<DataPiece>, send_status: Sender<DownloadEvents>) {
+    pub fn find_working_peers(
+        self: Arc<Self>,
+        send_data: Sender<DataPiece>,
+        send_status: Sender<DownloadEvents>,
+    ) {
         tokio::spawn(async move {
             let mut n = 0;
             for peer in self.peers.iter() {
-                if let Ok(peer) = Peer::new(&peer, send_data.clone(), Duration::from_secs(2)).await {
+                if let Ok(peer) = Peer::new(&peer, send_data.clone(), Duration::from_secs(2)).await
+                {
                     n += 1;
                     send_status
                         .send(DownloadEvents::PeerAdd(peer))

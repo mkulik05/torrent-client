@@ -3,24 +3,11 @@ use crate::peers::{Peer, PeerMessage, PeerStatus};
 use crate::torrent::Torrent;
 use crate::DownloadEvents;
 use std::io::ErrorKind;
-use std::ops::Range;
+use crate::download_tasks::ChunksTask;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::Sender;
 
-#[derive(Debug)]
-pub struct PieceTask {
-    pub piece_i: u64,
-    pub total_chunks: u64,
-    pub chunks_done: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct ChunksTask {
-    pub piece_i: u64,
-    pub chunks: Range<u64>,
-    pub includes_last_chunk: bool,
-}
 
 #[derive(Debug)]
 pub struct DownloadReq {

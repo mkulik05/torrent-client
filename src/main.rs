@@ -3,25 +3,24 @@ use std::env;
 use std::time::Duration;
 mod bencode;
 mod download;
+mod download_tasks;
 mod logger;
 mod peers;
+mod saver;
 mod torrent;
 mod tracker;
-mod saver;
+use crate::download_tasks::CHUNK_SIZE;
 use crate::logger::{log, LogLevel};
-use download::{ChunksTask, DownloadReq, PieceTask};
+use download::DownloadReq;
+use download_tasks::{ChunksTask, PieceTask, MAX_CHUNKS_TASKS};
 use peers::Peer;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Semaphore;
+use tokio::time::timeout;
 use torrent::Torrent;
 use tracker::TrackerReq;
-use tokio::time::timeout;
-
-const CHUNKS_PER_TASK: u64 = 30;
-const MAX_CHUNKS_TASKS: usize = 100;
-const CHUNK_SIZE: u64 = 16384;
 const SEMAPHORE_N: usize = 10;
 
 enum DownloadEvents {
@@ -38,37 +37,6 @@ fn handle_result<T>(res: anyhow::Result<T>) -> T {
             log!(LogLevel::Fatal, "error {:?}", err);
             panic!("error {:?}", err);
         }
-    }
-}
-
-fn add_chunks_tasks(
-    pieces_tasks: &mut VecDeque<PieceTask>,
-    chunks_tasks: &mut VecDeque<ChunksTask>,
-    chunks_to_add: usize,
-) { 
-    for _ in 0..chunks_to_add {
-        if pieces_tasks.is_empty() {
-            break;
-        }
-        let mut task = pieces_tasks.get_mut(0).expect("We checked it's not empty");
-        if task.chunks_done >= task.total_chunks {
-            let _ = pieces_tasks.pop_front();
-            if pieces_tasks.is_empty() {
-                break;
-            }
-            task = pieces_tasks.get_mut(0).expect("We checked it's not empty");
-        }
-        let chunks_up_border = if (task.chunks_done + CHUNKS_PER_TASK) > task.total_chunks {
-            task.total_chunks
-        } else {
-            task.chunks_done + CHUNKS_PER_TASK
-        };
-        chunks_tasks.push_back(ChunksTask {
-            piece_i: task.piece_i,
-            chunks: task.chunks_done..chunks_up_border,
-            includes_last_chunk: chunks_up_border == task.total_chunks,
-        });
-        task.chunks_done += CHUNKS_PER_TASK;
     }
 }
 
@@ -109,47 +77,46 @@ async fn main() {
             let mut peers = Vec::new();
 
             // tokio task spawns inside
-            tracker_resp.clone().find_working_peers(send_data.clone(), send_status.clone()); 
+            tracker_resp
+                .clone()
+                .find_working_peers(send_data.clone(), send_status.clone());
 
             let pieces_done = saver::find_downloaded_pieces(torrent.clone(), &args[3]).await;
 
-            saver::spawn_saver(args[3].to_string(), torrent.clone(), get_data, send_status.clone(), pieces_done.len());
+            saver::spawn_saver(
+                args[3].to_string(),
+                torrent.clone(),
+                get_data,
+                send_status.clone(),
+                pieces_done.len(),
+            );
 
-            let mut pieces_tasks = VecDeque::new();
+            let mut pieces_tasks = download_tasks::get_piece_tasks(torrent.clone(), pieces_done);
             let mut chunks_tasks = VecDeque::new();
 
-            let total_chunks = (torrent.info.piece_length as f64 / CHUNK_SIZE as f64).ceil() as u64;
-            for i in 0..torrent.info.piece_hashes.len() {
-                if pieces_done.iter().position(|&x| x == i).is_some() {
-                    continue;
-                }
-                pieces_tasks.push_back(PieceTask {
-                    piece_i: i as u64,
-                    total_chunks: if i == (torrent.info.piece_hashes.len() - 1) {
-                        ((torrent.info.length
-                            - (torrent.info.piece_hashes.len() - 1) as u64
-                                * torrent.info.piece_length) as f64
-                            / CHUNK_SIZE as f64)
-                            .ceil() as u64
-                    } else {
-                        total_chunks
-                    },
-                    chunks_done: 0,
-                })
-            }
-            add_chunks_tasks(&mut pieces_tasks, &mut chunks_tasks, MAX_CHUNKS_TASKS - 1);
+            download_tasks::add_chunks_tasks(
+                &mut pieces_tasks,
+                &mut chunks_tasks,
+                MAX_CHUNKS_TASKS - 1,
+            );
+
             let semaphore = Arc::new(Semaphore::new(SEMAPHORE_N));
             let mut no_free_peers = false;
             loop {
+
+                // if no free peers found, waiting for any message for some time, 
+                // if none appeared, searching for peers again 
                 let download_status = if no_free_peers {
                     let res = timeout(Duration::from_secs(20), get_status.recv()).await;
                     match res {
                         Err(_) => {
-                            tracker_resp.clone().find_working_peers(send_data.clone(), send_status.clone());
+                            tracker_resp
+                                .clone()
+                                .find_working_peers(send_data.clone(), send_status.clone());
                             continue;
-                        },
-                        Ok(value) => {value}
-                    } 
+                        }
+                        Ok(value) => value,
+                    }
                 } else {
                     let download_status = get_status.try_recv();
                     if let Ok(val) = download_status {
@@ -198,7 +165,7 @@ async fn main() {
                     }
                 }
 
-                add_chunks_tasks(&mut pieces_tasks, &mut chunks_tasks, 1);
+                download_tasks::add_chunks_tasks(&mut pieces_tasks, &mut chunks_tasks, 1);
                 if !chunks_tasks.is_empty() {
                     let permit = semaphore.clone().acquire_owned().await.unwrap();
                     let send_status = send_status.clone();
@@ -222,7 +189,12 @@ async fn main() {
                     }
                     let downloader = DownloadReq::new(torrent.clone(), peer, task);
                     tokio::spawn(async move {
-                        log!(LogLevel::Debug, "Peer {}, Curr task: {:?}", downloader.peer.peer_addr, downloader.task);
+                        log!(
+                            LogLevel::Debug,
+                            "Peer {}, Curr task: {:?}",
+                            downloader.peer.peer_addr,
+                            downloader.task
+                        );
                         let task = downloader.task.clone();
                         let addr = downloader.peer.peer_addr.clone();
                         let send_status2 = send_status.clone();
@@ -241,16 +213,26 @@ async fn main() {
                             //  TO FIX
                             let mut attempt_n = 0;
                             let mut delay = 1;
-                            let mut peer = Peer::new(&addr, send_data.clone(), Duration::from_secs(delay)).await;
+                            let mut peer =
+                                Peer::new(&addr, send_data.clone(), Duration::from_secs(delay))
+                                    .await;
                             while attempt_n < 3 {
                                 if let Err(e) = peer {
                                     if e.to_string() == "Connection timeout" {
                                         attempt_n += 1;
                                         delay += 1;
-                                        peer = Peer::new(&addr, send_data.clone(), Duration::from_secs(delay)).await;
+                                        peer = Peer::new(
+                                            &addr,
+                                            send_data.clone(),
+                                            Duration::from_secs(delay),
+                                        )
+                                        .await;
                                     } else {
-                                        // failed to connect to peer, it's lost...
-                                        log!(LogLevel::Fatal, "Can't connect to peer, it's lost... {}", addr);
+                                        log!(
+                                            LogLevel::Fatal,
+                                            "Can't connect to peer, it's lost... {}",
+                                            addr
+                                        );
                                         return;
                                     }
                                 } else {
@@ -259,9 +241,9 @@ async fn main() {
                             }
                             if peer.is_ok() {
                                 send_status2
-                                .send(DownloadEvents::PeerAdd(peer.unwrap()))
-                                .await
-                                .unwrap();
+                                    .send(DownloadEvents::PeerAdd(peer.unwrap()))
+                                    .await
+                                    .unwrap();
                             } else {
                                 log!(LogLevel::Fatal, "Failed to connect to peer after several attemplts, it's lost... {}", addr);
                             }
@@ -270,7 +252,6 @@ async fn main() {
                     });
                 }
             }
-            // println!("Downloaded {} to {}.", &args[4], &args[3]);
         }
         _ => println!("unknown command: {}", args[1]),
     }

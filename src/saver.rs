@@ -43,14 +43,14 @@ impl PieceChunksBitmap {
         }
     }
     fn add_chunk(&mut self, begin: usize) {
-        let chunk_i = begin / crate::CHUNK_SIZE as usize;
+        let chunk_i = begin / crate::download_tasks::CHUNK_SIZE as usize;
         let bitmap_cell_i = chunk_i / 8;
         let mut mask = 128;
         mask >>= chunk_i % 8;
         self.bitmap[bitmap_cell_i] |= mask;
     }
     fn chunk_exist(&self, begin: usize) -> bool {
-        let chunk_i = begin / crate::CHUNK_SIZE as usize;
+        let chunk_i = begin / crate::download_tasks::CHUNK_SIZE as usize;
         let bitmap_cell_i = chunk_i / 8;
         let mut mask = 128;
         mask >>= chunk_i % 8;
