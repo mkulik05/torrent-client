@@ -5,6 +5,7 @@ use crate::peers::Peer;
 use crate::torrent::Torrent;
 use crate::DownloadEvents;
 use rand::distributions::{Alphanumeric, DistString};
+use std::fmt::Write;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::Sender;
@@ -27,11 +28,10 @@ pub struct TrackerResp {
 impl TrackerReq {
     pub fn init(torrent: &Torrent) -> Self {
         TrackerReq {
-            info_hash: torrent
-                .info_hash
-                .iter()
-                .map(|b| format!("%{:02x}", b))
-                .collect(),
+            info_hash: torrent.info_hash.iter().fold(String::new(), |mut s, b| {
+                write!(s, "%{:02x}", b).unwrap();
+                s
+            }),
             peer_id: Alphanumeric.sample_string(&mut rand::thread_rng(), 20),
             port: 6681,
             uploaded: 0,
@@ -99,8 +99,7 @@ impl TrackerResp {
         tokio::spawn(async move {
             let mut n = 0;
             for peer in self.peers.iter() {
-                if let Ok(peer) = Peer::new(&peer, send_data.clone(), Duration::from_secs(2)).await
-                {
+                if let Ok(peer) = Peer::new(peer, send_data.clone(), Duration::from_secs(2)).await {
                     n += 1;
                     send_status
                         .send(DownloadEvents::PeerAdd(peer))

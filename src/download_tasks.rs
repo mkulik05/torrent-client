@@ -26,7 +26,7 @@ pub fn get_piece_tasks(torrent: Arc<Torrent>, pieces_done: Vec<usize>) -> VecDeq
     let mut pieces_tasks = VecDeque::new();
     let total_chunks = (torrent.info.piece_length as f64 / CHUNK_SIZE as f64).ceil() as u64;
     for i in 0..torrent.info.piece_hashes.len() {
-        if pieces_done.iter().position(|&x| x == i).is_some() {
+        if pieces_done.iter().any(|&x| x == i) {
             continue;
         }
         pieces_tasks.push_back(PieceTask {

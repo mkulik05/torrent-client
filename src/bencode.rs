@@ -113,7 +113,7 @@ impl BencodeValue {
                     buf += ","
                 }
                 if !keys.is_empty() {
-                    buf = buf.strip_suffix(",").expect("Suffix is added anyway").to_owned();
+                    buf = buf.strip_suffix(',').expect("Suffix is added anyway").to_owned();
                 }
                 buf + "}"
             }
@@ -130,10 +130,10 @@ impl BencodeValue {
             }
         }
     }
-    pub fn encode<W: Write>(&self, writer: &mut W) -> anyhow::Result<()>{
+    pub fn encode(&self, buffer: &mut Vec<u8>) -> anyhow::Result<()>{
         match self {
             BencodeValue::Bytes(bytes) => {
-                writer
+                buffer
                     .write_vectored(&[
                         IoSlice::new(bytes.len().to_string().as_bytes()),
                         IoSlice::new(b":"),
@@ -141,7 +141,7 @@ impl BencodeValue {
                     ])?;
             }
             BencodeValue::Num(n) => {
-                writer
+                buffer
                     .write_vectored(&[
                         IoSlice::new(b"i"),
                         IoSlice::new(n.to_string().as_bytes()),
@@ -149,27 +149,27 @@ impl BencodeValue {
                     ])?;
             }
             BencodeValue::List(arr) => {
-                writer.write_all(b"l")?;
+                buffer.write_all(b"l")?;
                 for el in arr {
-                    el.encode(writer)?;
+                    el.encode(buffer)?;
                 }
-                writer.write_all(b"e")?;
+                buffer.write_all(b"e")?;
             }
             BencodeValue::Dict(dict) => {
-                writer.write_all(b"d")?;
+                buffer.write_all(b"d")?;
 
                 let mut keys = dict.keys().collect::<Vec<_>>();
                 keys.sort();
                 for key in keys {
-                    writer
+                    buffer
                         .write_vectored(&[
                             IoSlice::new(key.as_bytes().len().to_string().as_bytes()),
                             IoSlice::new(b":"),
                             IoSlice::new(key.as_bytes()),
                         ])?;
-                    dict.get(key).expect("Key exists").encode(writer)?;
+                    dict.get(key).expect("Key exists").encode(buffer)?;
                 }
-                writer.write_all(b"e")?;
+                buffer.write_all(b"e")?;
             }
             _ => {}
         }

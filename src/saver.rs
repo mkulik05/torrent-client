@@ -62,10 +62,8 @@ impl PieceChunksBitmap {
                 if self.last_chunk_mask != self.bitmap[i] {
                     return false;
                 }
-            } else {
-                if self.bitmap[i] != 255 {
-                    return false;
-                }
+            } else if self.bitmap[i] != 255 {
+                return false;
             }
         }
         true
@@ -90,85 +88,74 @@ pub fn spawn_saver(
             .unwrap();
         let mut pieces_chunks: HashMap<u64, PieceChunksBitmap> = HashMap::new();
         let mut pieces_finished = pieces_done;
-        loop {
-            match get_data.recv().await {
-                Some(data) => {
+        while let Some(data) = get_data.recv().await {
+            log!(
+                LogLevel::Info,
+                "Saver: piece_i: {} {}",
+                data.piece_i,
+                data.begin
+            );
+            if pieces_chunks.contains_key(&data.piece_i)
+                && pieces_chunks
+                    .get(&data.piece_i)
+                    .unwrap()
+                    .chunk_exist(data.begin as usize)
+            {
+                log!(
+                    LogLevel::Error,
+                    "Saver: Chunk {}.. of piece {} is already saved!!!",
+                    data.begin,
+                    data.piece_i
+                );
+                continue;
+            }
+            let addr = data.piece_i * torrent.info.piece_length + data.begin;
+            file.seek(std::io::SeekFrom::Start(addr)).unwrap();
+            file.write_all(&data.buf).unwrap();
+            if let std::collections::hash_map::Entry::Vacant(e) = pieces_chunks.entry(data.piece_i)
+            {
+                e.insert(PieceChunksBitmap::new(&torrent, data.piece_i as usize));
+                log!(LogLevel::Debug, "Just added key");
+            }
+            log!(
+                LogLevel::Debug,
+                "{:?}",
+                pieces_chunks.get(&data.piece_i).unwrap()
+            );
+            let chunks_bitmap = pieces_chunks.get_mut(&data.piece_i).unwrap();
+            chunks_bitmap.add_chunk(data.begin as usize);
+            if chunks_bitmap.is_piece_ready() {
+                let addr = data.piece_i * torrent.info.piece_length;
+                let piece_length = if data.piece_i as usize == torrent.info.piece_hashes.len() - 1 {
+                    torrent.info.length - data.piece_i * torrent.info.piece_length
+                } else {
+                    torrent.info.piece_length
+                };
+                file.seek(std::io::SeekFrom::Start(addr)).unwrap();
+                let mut piece_buf = vec![0; piece_length as usize];
+                file.read_exact(&mut piece_buf).unwrap();
+                let hash = Torrent::bytes_hash(&piece_buf);
+                if hash != torrent.info.piece_hashes[data.piece_i as usize] {
+                    log!(LogLevel::Error, "Piece {} hash didn't match", data.piece_i);
+                    send_status
+                        .send(DownloadEvents::InvalidHash(data.piece_i))
+                        .await
+                        .unwrap();
+                    *chunks_bitmap = PieceChunksBitmap::new(&torrent, data.piece_i as usize);
+                } else {
                     log!(
                         LogLevel::Info,
-                        "Saver: piece_i: {} {}",
+                        "Piece {} hash matched, downloaded: {}",
                         data.piece_i,
-                        data.begin
+                        pieces_finished + 1
                     );
-                    if pieces_chunks.contains_key(&data.piece_i) {
-                        if pieces_chunks
-                            .get(&data.piece_i)
-                            .unwrap()
-                            .chunk_exist(data.begin as usize)
-                        {
-                            log!(
-                                LogLevel::Error,
-                                "Saver: Chunk {}.. of piece {} is already saved!!!",
-                                data.begin,
-                                data.piece_i
-                            );
-                            continue;
-                        }
-                    }
-                    let addr = data.piece_i * torrent.info.piece_length + data.begin;
-                    file.seek(std::io::SeekFrom::Start(addr)).unwrap();
-                    file.write_all(&data.buf).unwrap();
-                    if !pieces_chunks.contains_key(&data.piece_i) {
-                        pieces_chunks.insert(
-                            data.piece_i,
-                            PieceChunksBitmap::new(&torrent, data.piece_i as usize),
-                        );
-                        log!(LogLevel::Debug, "Just added key");
-                    }
-                    log!(
-                        LogLevel::Debug,
-                        "{:?}",
-                        pieces_chunks.get(&data.piece_i).unwrap()
-                    );
-                    let chunks_bitmap = pieces_chunks.get_mut(&data.piece_i).unwrap();
-                    chunks_bitmap.add_chunk(data.begin as usize);
-                    if chunks_bitmap.is_piece_ready() {
-                        let addr = data.piece_i * torrent.info.piece_length;
-                        let piece_length = if data.piece_i as usize
-                            == torrent.info.piece_hashes.len() - 1
-                        {
-                            torrent.info.length - data.piece_i as u64 * torrent.info.piece_length
-                        } else {
-                            torrent.info.piece_length
-                        };
-                        file.seek(std::io::SeekFrom::Start(addr)).unwrap();
-                        let mut piece_buf = vec![0; piece_length as usize];
-                        file.read_exact(&mut piece_buf).unwrap();
-                        let hash = Torrent::bytes_hash(&piece_buf);
-                        if hash != torrent.info.piece_hashes[data.piece_i as usize] {
-                            log!(LogLevel::Error, "Piece {} hash didn't match", data.piece_i);
-                            send_status
-                                .send(DownloadEvents::InvalidHash(data.piece_i))
-                                .await
-                                .unwrap();
-                            *chunks_bitmap =
-                                PieceChunksBitmap::new(&torrent, data.piece_i as usize);
-                        } else {
-                            log!(
-                                LogLevel::Info,
-                                "Piece {} hash matched, downloaded: {}",
-                                data.piece_i,
-                                pieces_finished + 1
-                            );
-                            pieces_finished += 1;
-                            if pieces_finished == torrent.info.piece_hashes.len() {
-                                log!(LogLevel::Info, "Whole file downloaded and verified");
-                                send_status.send(DownloadEvents::Finished).await.unwrap();
-                                break;
-                            }
-                        }
+                    pieces_finished += 1;
+                    if pieces_finished == torrent.info.piece_hashes.len() {
+                        log!(LogLevel::Info, "Whole file downloaded and verified");
+                        send_status.send(DownloadEvents::Finished).await.unwrap();
+                        break;
                     }
                 }
-                None => break,
             }
         }
     });
@@ -177,7 +164,7 @@ pub fn spawn_saver(
 pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, path: &str) -> Vec<usize> {
     let mut downloaded_pieces = Vec::new();
     let mut pieces_processed = 0;
-    let mut pieces_done = 0; 
+    let mut pieces_done = 0;
     if std::path::Path::new(path).exists() {
         let mut file = File::options().read(true).open(path).unwrap();
         let pieces_i = torrent.info.piece_hashes.len();
@@ -215,7 +202,9 @@ pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, path: &str) -> Vec<us
             }
         }
         while pieces_done < pieces_processed {
-            if let Ok(Some((i, have))) = timeout(std::time::Duration::from_secs(10), receiver.recv()).await {
+            if let Ok(Some((i, have))) =
+                timeout(std::time::Duration::from_secs(10), receiver.recv()).await
+            {
                 pieces_done += 1;
                 if have {
                     downloaded_pieces.push(i);

@@ -56,7 +56,7 @@ async fn main() {
                 .info
                 .piece_hashes
                 .iter()
-                .map(|bytes| hex::encode(bytes))
+                .map(hex::encode)
                 .collect();
             println!(
                 "Tracker URL: {}\nLength: {}\nInfo Hash: {}\nPiece Length: {}\nPiece Hashes:\n{}",

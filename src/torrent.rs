@@ -68,7 +68,6 @@ impl Torrent {
     pub fn bytes_hash(src: &Vec<u8>) -> Vec<u8> {
         let mut hasher = Sha1::new();
         hasher.update(src);
-        let info_hash = hasher.finalize().to_vec();
-        info_hash
+        hasher.finalize().to_vec()
     }
 }

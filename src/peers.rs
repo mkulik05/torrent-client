@@ -95,7 +95,7 @@ impl Peer {
                     "Connecting to peer: {}",
                     self.socket.peer_addr()?
                 );
-                self.peer_id = Some(self.handshake(&torrent).await?);
+                self.peer_id = Some(self.handshake(torrent).await?);
                 let mut timeout = 1;
                 let mut attempts_n = 0;
                 while attempts_n < MAX_INTERESTED_ATTEMPTS {
