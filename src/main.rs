@@ -1,11 +1,5 @@
 use crate::download::DataPiece;
-use std::collections::HashMap;
 use std::env;
-use std::fs::File;
-use std::io::ErrorKind;
-use std::io::Read;
-use std::io::Seek;
-use std::io::Write;
 use std::time::Duration;
 mod bencode;
 mod download;
@@ -13,6 +7,7 @@ mod logger;
 mod peers;
 mod torrent;
 mod tracker;
+mod saver;
 use crate::logger::{log, LogLevel};
 use download::{ChunksTask, DownloadReq, PieceTask};
 use peers::Peer;
@@ -34,64 +29,6 @@ enum DownloadEvents {
     InvalidHash(u64),
     Finished,
     PeerAdd(Peer),
-}
-
-#[derive(Debug)]
-struct PieceChunksBitmap {
-    bitmap: Vec<u8>,
-    last_chunk_mask: u8,
-}
-
-impl PieceChunksBitmap {
-    fn new(torrent: &Torrent, piece_i: usize) -> Self {
-        let piece_length = if piece_i == torrent.info.piece_hashes.len() - 1 {
-            torrent.info.length - piece_i as u64 * torrent.info.piece_length
-        } else {
-            torrent.info.piece_length
-        };
-        let chunks_n = (piece_length as f64 / crate::CHUNK_SIZE as f64).ceil() as i32;
-        let mut last_chunk_mask = 0;
-        let mut mask = 128;
-        if chunks_n % 8 == 0 {
-            last_chunk_mask = 255;
-        }
-        for _ in 0..(chunks_n % 8) {
-            last_chunk_mask |= mask;
-            mask >>= 1;
-        }
-        PieceChunksBitmap {
-            bitmap: vec![0; (chunks_n as f64 / 8.0).ceil() as usize],
-            last_chunk_mask,
-        }
-    }
-    fn add_chunk(&mut self, begin: usize) {
-        let chunk_i = begin / crate::CHUNK_SIZE as usize;
-        let bitmap_cell_i = chunk_i / 8;
-        let mut mask = 128;
-        mask >>= chunk_i % 8;
-        self.bitmap[bitmap_cell_i] |= mask;
-    }
-    fn chunk_exist(&self, begin: usize) -> bool {
-        let chunk_i = begin / crate::CHUNK_SIZE as usize;
-        let bitmap_cell_i = chunk_i / 8;
-        let mut mask = 128;
-        mask >>= chunk_i % 8;
-        self.bitmap[bitmap_cell_i] & mask == mask
-    }
-    fn is_piece_ready(&self) -> bool {
-        for i in 0..self.bitmap.len() {
-            if i == self.bitmap.len() - 1 {
-                if self.last_chunk_mask != self.bitmap[i] {
-                    return false;
-                }
-            } else {
-                if self.bitmap[i] != 255 {
-                    return false;
-                }
-            }
-        }
-        true
-    }
 }
 
 fn handle_result<T>(res: anyhow::Result<T>) -> T {
@@ -168,145 +105,15 @@ async fn main() {
             let tracker_resp = Arc::new(handle_result(tracker_req.send(&torrent).await));
             let torrent = Arc::new(torrent);
             let (send_status, mut get_status) = mpsc::channel(270);
-            let (send_data, mut get_data) = mpsc::channel::<DataPiece>(50);
+            let (send_data, get_data) = mpsc::channel::<DataPiece>(50);
             let mut peers = Vec::new();
-
 
             // tokio task spawns inside
             tracker_resp.clone().find_working_peers(send_data.clone(), send_status.clone()); 
-            
 
-            let mut pieces_done = Vec::new();
-            if std::path::Path::new(&args[3]).exists() {
-                let mut file = File::options().read(true).open(&args[3]).unwrap();
-                let pieces_i = torrent.info.piece_hashes.len();
-                let mut piece_buf = vec![0; torrent.info.piece_length as usize];
-                for i in 0..pieces_i {
-                    let read_res = file.read_exact(&mut piece_buf);
-                    if let Err(e) = read_res {
-                        if e.kind() == ErrorKind::UnexpectedEof {
-                            break;
-                        } else {
-                            panic!("Unexpected error: {:?}", e);
-                        }
-                    }
-                    let hash = Torrent::bytes_hash(&piece_buf);
-                    if hash == torrent.info.piece_hashes[i] {
-                        pieces_done.push(i);
-                        log!(LogLevel::Info, "Piece {} is already downloaded", i);
-                    }
-                }
-            }
+            let pieces_done = saver::find_downloaded_pieces(torrent.clone(), &args[3]).await;
 
-            // Saver task - save downloaded chunks to disk, verify piece hash,
-            // notify about finishing donwload
-            {
-                let torrent = torrent.clone();
-                let send_status = send_status.clone();
-                let pieces_done = pieces_done.len();
-                tokio::spawn(async move {
-                    let mut file = File::options()
-                        .read(true)
-                        .write(true)
-                        .create(true)
-                        .open(&args[3])
-                        .unwrap();
-                    let mut pieces_chunks: HashMap<u64, PieceChunksBitmap> = HashMap::new();
-                    let mut pieces_finished = pieces_done;
-                    loop {
-                        match get_data.recv().await {
-                            Some(data) => {
-                                log!(
-                                    LogLevel::Info,
-                                    "Saver: piece_i: {} {}",
-                                    data.piece_i,
-                                    data.begin
-                                );
-                                if pieces_chunks.contains_key(&data.piece_i) {
-                                    if pieces_chunks
-                                        .get(&data.piece_i)
-                                        .unwrap()
-                                        .chunk_exist(data.begin as usize)
-                                    {
-                                        log!(
-                                            LogLevel::Error,
-                                            "Saver: Chunk {}.. of piece {} is already saved!!!",
-                                            data.begin,
-                                            data.piece_i
-                                        );
-                                        continue;
-                                    }
-                                }
-                                let addr = data.piece_i * torrent.info.piece_length + data.begin;
-                                file.seek(std::io::SeekFrom::Start(addr)).unwrap();
-                                file.write_all(&data.buf).unwrap();
-                                if !pieces_chunks.contains_key(&data.piece_i) {
-                                    pieces_chunks.insert(
-                                        data.piece_i,
-                                        PieceChunksBitmap::new(&torrent, data.piece_i as usize),
-                                    );
-                                    log!(LogLevel::Debug, "Just added key");
-                                }
-                                log!(
-                                    LogLevel::Debug,
-                                    "{:?}",
-                                    pieces_chunks.get(&data.piece_i).unwrap()
-                                );
-                                let chunks_bitmap = pieces_chunks.get_mut(&data.piece_i).unwrap();
-                                chunks_bitmap.add_chunk(data.begin as usize);
-                                if chunks_bitmap.is_piece_ready() {
-                                    let addr = data.piece_i * torrent.info.piece_length;
-                                    let piece_length = if data.piece_i as usize
-                                        == torrent.info.piece_hashes.len() - 1
-                                    {
-                                        torrent.info.length
-                                            - data.piece_i as u64 * torrent.info.piece_length
-                                    } else {
-                                        torrent.info.piece_length
-                                    };
-                                    file.seek(std::io::SeekFrom::Start(addr)).unwrap();
-                                    let mut piece_buf = vec![0; piece_length as usize];
-                                    file.read_exact(&mut piece_buf).unwrap();
-                                    let hash = Torrent::bytes_hash(&piece_buf);
-                                    if hash != torrent.info.piece_hashes[data.piece_i as usize] {
-                                        log!(
-                                            LogLevel::Error,
-                                            "Piece {} hash didn't match",
-                                            data.piece_i
-                                        );
-                                        send_status
-                                            .send(DownloadEvents::InvalidHash(data.piece_i))
-                                            .await
-                                            .unwrap();
-                                        *chunks_bitmap =
-                                            PieceChunksBitmap::new(&torrent, data.piece_i as usize);
-                                    } else {
-                                        log!(
-                                            LogLevel::Info,
-                                            "Piece {} hash matched, downloaded: {}",
-                                            data.piece_i,
-                                            pieces_finished + 1
-                                        );
-                                        pieces_finished += 1;
-                                        if pieces_finished == torrent.info.piece_hashes.len() {
-                                            log!(
-                                                LogLevel::Info,
-                                                "Whole file downloaded and verified"
-                                            );
-                                            send_status
-                                                .send(DownloadEvents::Finished)
-                                                .await
-                                                .unwrap();
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            None => break,
-                        }
-                    }
-                });
-            }
+            saver::spawn_saver(args[3].to_string(), torrent.clone(), get_data, send_status.clone(), pieces_done.len());
 
             let mut pieces_tasks = VecDeque::new();
             let mut chunks_tasks = VecDeque::new();
