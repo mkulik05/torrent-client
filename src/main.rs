@@ -15,6 +15,7 @@ use download::DownloadReq;
 use download_tasks::{ChunksTask, PieceTask, MAX_CHUNKS_TASKS};
 use peers::Peer;
 use std::collections::VecDeque;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Semaphore;
@@ -52,12 +53,7 @@ async fn main() {
     match command.as_str() {
         "info" => {
             let torrent = Torrent::new(&args[2]).unwrap();
-            let hashes: Vec<String> = torrent
-                .info
-                .piece_hashes
-                .iter()
-                .map(hex::encode)
-                .collect();
+            let hashes: Vec<String> = torrent.info.piece_hashes.iter().map(hex::encode).collect();
             println!(
                 "Tracker URL: {}\nLength: {}\nInfo Hash: {}\nPiece Length: {}\nPiece Hashes:\n{}",
                 torrent.tracker_url,
@@ -69,6 +65,12 @@ async fn main() {
         }
         "download" => {
             let torrent = handle_result(Torrent::new(&args[4]));
+            let file_path = if Path::new(&args[3]).is_dir() {
+                Path::new(&args[3]).join(&torrent.info.name)
+            } else {
+                Path::new(&args[3]).to_path_buf()
+            };
+            let file_path = file_path.to_str().unwrap();
             let tracker_req = TrackerReq::init(&torrent);
             let tracker_resp = Arc::new(handle_result(tracker_req.send(&torrent).await));
             let torrent = Arc::new(torrent);
@@ -81,10 +83,10 @@ async fn main() {
                 .clone()
                 .find_working_peers(send_data.clone(), send_status.clone());
 
-            let pieces_done = saver::find_downloaded_pieces(torrent.clone(), &args[3]).await;
+            let pieces_done = saver::find_downloaded_pieces(torrent.clone(), file_path).await;
 
             saver::spawn_saver(
-                args[3].to_string(),
+                file_path.to_string(),
                 torrent.clone(),
                 get_data,
                 send_status.clone(),
@@ -103,9 +105,8 @@ async fn main() {
             let semaphore = Arc::new(Semaphore::new(SEMAPHORE_N));
             let mut no_free_peers = false;
             loop {
-
-                // if no free peers found, waiting for any message for some time, 
-                // if none appeared, searching for peers again 
+                // if no free peers found, waiting for any message for some time,
+                // if none appeared, searching for peers again
                 let download_status = if no_free_peers {
                     let res = timeout(Duration::from_secs(20), get_status.recv()).await;
                     match res {

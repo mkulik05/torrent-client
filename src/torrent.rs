@@ -1,8 +1,14 @@
 use crate::bencode::BencodeValue;
+use crate::logger::{log, LogLevel};
 use sha1::{Digest, Sha1};
 use std::fs::File;
 use std::io::Read;
-use crate::logger::{log, LogLevel};
+
+#[derive(Debug)]
+struct TorrentFiles {
+    length: u64,
+    path: String,
+}
 
 #[derive(Debug)]
 pub struct Torrent {
@@ -15,6 +21,8 @@ pub struct Torrent {
 #[derive(Debug)]
 pub struct TorrentInfo {
     pub length: u64,
+    pub files: Option<Vec<TorrentFiles>>,
+    pub name: String,
     pub piece_length: u64,
     pub piece_hashes: Vec<Vec<u8>>,
 }
@@ -43,6 +51,23 @@ impl Torrent {
             length: length as u64,
             piece_length: piece_length as u64,
             piece_hashes,
+            name: parsed_file["info"]["name"].to_lossy_string(),
+            files: if let BencodeValue::List(list) = &parsed_file["info"]["files"] {
+                let mut res = Vec::new();
+                for el in list {
+                    let BencodeValue::Dict(dict) = el else {
+                        anyhow::bail!("wrong torrent file structure");
+                    };
+                    let file = TorrentFiles {
+                        length: dict["length"].to_lossy_string().parse()?,
+                        path: dict["path"].to_lossy_string(),
+                    };
+                    res.push(file)
+                }
+                Some(res)
+            } else {
+                None
+            },
         };
 
         Ok(Torrent {
