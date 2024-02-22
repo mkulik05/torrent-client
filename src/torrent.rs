@@ -5,9 +5,9 @@ use std::fs::File;
 use std::io::Read;
 
 #[derive(Debug)]
-struct TorrentFiles {
-    length: u64,
-    path: String,
+pub struct TorrentFiles {
+    pub length: u64,
+    pub path: String,
 }
 
 #[derive(Debug)]
