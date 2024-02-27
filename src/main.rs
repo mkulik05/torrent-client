@@ -11,6 +11,7 @@ mod torrent;
 mod tracker;
 use crate::download_tasks::CHUNK_SIZE;
 use crate::logger::{log, LogLevel};
+use crate::torrent::TorrentFile;
 use download::DownloadReq;
 use download_tasks::{ChunksTask, PieceTask, MAX_CHUNKS_TASKS};
 use peers::Peer;
@@ -22,6 +23,7 @@ use tokio::sync::Semaphore;
 use tokio::time::timeout;
 use torrent::Torrent;
 use tracker::TrackerReq;
+
 const SEMAPHORE_N: usize = 10;
 
 enum DownloadEvents {
@@ -47,7 +49,14 @@ async fn main() {
         "/tmp/log{}.txt",
         chrono::Local::now().format("%d-%m-%Y_%H-%M-%S")
     )));
-    let args: Vec<String> = env::args().collect();
+    let args: Vec<String> = Vec::from([
+        "".to_string(),
+        "download".to_string(),
+        "".to_string(),
+        "/home/mkul1k/Videos".to_string(),
+        "/home/mkul1k/Documents/JetBrains PhpStorm 2023.1 x64 [ENG] [rutracker-6413537].torrent"
+            .to_string(),
+    ]);
     let command = &args[1];
 
     match command.as_str() {
@@ -65,6 +74,17 @@ async fn main() {
         }
         "download" => {
             let torrent = handle_result(Torrent::new(&args[4]));
+            println!(
+                "{:?}",
+                torrent
+                    .info
+                    .files
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .map(|x: &TorrentFile| x.path.clone())
+                    .collect::<Vec<String>>()
+            );
             let file_path = if Path::new(&args[3]).is_dir() {
                 Path::new(&args[3]).join(&torrent.info.name)
             } else {
@@ -83,7 +103,7 @@ async fn main() {
                 .clone()
                 .find_working_peers(send_data.clone(), send_status.clone());
 
-            let pieces_done = saver::find_downloaded_pieces(torrent.clone(), file_path).await;
+            let pieces_done = Vec::new(); //saver::find_downloaded_pieces(torrent.clone(), file_path).await;
 
             saver::spawn_saver(
                 file_path.to_string(),
@@ -133,7 +153,7 @@ async fn main() {
                             let total_chunks = (torrent.info.piece_length as f64
                                 / CHUNK_SIZE as f64)
                                 .ceil() as u64;
-                            pieces_tasks.push_back(PieceTask {
+                            pieces_tasks.push_front(PieceTask {
                                 piece_i,
                                 chunks_done: 0,
                                 total_chunks: if piece_i as usize

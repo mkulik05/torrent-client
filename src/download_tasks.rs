@@ -3,7 +3,7 @@ use std::ops::Range;
 use crate::torrent::Torrent;
 use std::sync::Arc;
 
-const CHUNKS_PER_TASK: u64 = 30;
+const CHUNKS_PER_TASK: u64 = 10;
 pub const MAX_CHUNKS_TASKS: usize = 100;
 pub const CHUNK_SIZE: u64 = 16384;
 
@@ -23,7 +23,7 @@ pub struct ChunksTask {
 }
 
 pub fn get_piece_tasks(torrent: Arc<Torrent>, pieces_done: Vec<usize>) -> VecDeque<PieceTask> {
-    let mut pieces_tasks = VecDeque::new();
+    let mut pieces_tasks = VecDeque::with_capacity(torrent.info.piece_hashes.len());
     let total_chunks = (torrent.info.piece_length as f64 / CHUNK_SIZE as f64).ceil() as u64;
     for i in 0..torrent.info.piece_hashes.len() {
         if pieces_done.iter().any(|&x| x == i) {

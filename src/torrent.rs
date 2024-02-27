@@ -3,9 +3,10 @@ use crate::logger::{log, LogLevel};
 use sha1::{Digest, Sha1};
 use std::fs::File;
 use std::io::Read;
+use std::path::PathBuf;
 
 #[derive(Debug)]
-pub struct TorrentFiles {
+pub struct TorrentFile {
     pub length: u64,
     pub path: String,
 }
@@ -13,15 +14,15 @@ pub struct TorrentFiles {
 #[derive(Debug)]
 pub struct Torrent {
     pub tracker_url: String,
-    // pub tracker_list: Vec<String>,
     pub info: TorrentInfo,
     pub info_hash: Vec<u8>,
 }
 
 #[derive(Debug)]
 pub struct TorrentInfo {
+    // total length
     pub length: u64,
-    pub files: Option<Vec<TorrentFiles>>,
+    pub files: Option<Vec<TorrentFile>>,
     pub name: String,
     pub piece_length: u64,
     pub piece_hashes: Vec<Vec<u8>>,
@@ -31,14 +32,45 @@ impl Torrent {
     pub fn new(path: &str) -> anyhow::Result<Self> {
         log!(LogLevel::Debug, "Parsing torrent file");
         let parsed_file = Torrent::parse_torrent_file(path)?;
-        println!("{}", parsed_file["announce-list"][0][0].to_string());
-        let BencodeValue::Num(length) = parsed_file["info"]["length"] else {
-            anyhow::bail!("Invalid torrent file structure");
+        let length = if let BencodeValue::Num(n) = parsed_file["info"]["length"] {
+            Some(n as u64)
+        } else {
+            None
+        };
+        let mut length = length.unwrap_or(0);
+        let files = if let BencodeValue::List(list) = &parsed_file["info"]["files"] {
+            let mut res = Vec::new();
+            for el in list {
+                let BencodeValue::Dict(dict) = el else {
+                    anyhow::bail!("wrong torrent file structure");
+                };
+                let BencodeValue::Num(len) = dict["length"] else {
+                    anyhow::bail!("wrong torrent file structure");
+                };
+                let BencodeValue::List(ref path) = dict["path"] else {
+                    anyhow::bail!("wrong torrent file structure");
+                };
+
+                let mut res_path = PathBuf::new();
+                for subpath in path {
+                    res_path = res_path.join(subpath.to_lossy_string());
+                }
+                let file = TorrentFile {
+                    length: len as u64,
+                    path: res_path.to_str().unwrap().to_owned(),
+                };  
+                length += len as u64;
+                res.push(file)
+            }
+            Some(res)
+        } else {
+            None
         };
         let BencodeValue::Num(piece_length) = parsed_file["info"]["piece length"] else {
             anyhow::bail!("Invalid torrent file structure");
         };
         let BencodeValue::Bytes(ref byte_pieces) = parsed_file["info"]["pieces"] else {
+            println!("nooo");
             anyhow::bail!("Invalid torrent file structure");
         };
         log!(LogLevel::Debug, "Parsed successfully");
@@ -48,26 +80,11 @@ impl Torrent {
             piece_hashes.push(byte_pieces[i * 20..(i + 1) * 20].to_vec());
         }
         let torrent_info = TorrentInfo {
-            length: length as u64,
+            length,
             piece_length: piece_length as u64,
             piece_hashes,
             name: parsed_file["info"]["name"].to_lossy_string(),
-            files: if let BencodeValue::List(list) = &parsed_file["info"]["files"] {
-                let mut res = Vec::new();
-                for el in list {
-                    let BencodeValue::Dict(dict) = el else {
-                        anyhow::bail!("wrong torrent file structure");
-                    };
-                    let file = TorrentFiles {
-                        length: dict["length"].to_lossy_string().parse()?,
-                        path: dict["path"].to_lossy_string(),
-                    };
-                    res.push(file)
-                }
-                Some(res)
-            } else {
-                None
-            },
+            files,
         };
 
         Ok(Torrent {
