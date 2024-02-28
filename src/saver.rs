@@ -97,7 +97,6 @@ pub fn spawn_saver(
     pieces_done: usize,
 ) {
     let file_inc_length = if let Some(ref files) = torrent.info.files {
-        log!(LogLevel::Info, "{:?}", files);
         let mut arr = Vec::with_capacity(files.len());
         arr.push(0);
         for (i, file) in files.iter().enumerate() {
@@ -149,13 +148,6 @@ pub fn spawn_saver(
                         addr - size_progression[file_i_l - 1],
                     );
                 } else {
-                    log!(LogLevel::Info, "files_i: {file_i_l} {file_i_r}");
-                    log!(
-                        LogLevel::Info,
-                        "progression: {:?} {}",
-                        size_progression,
-                        size_progression.len()
-                    );
                     let mut bytes_saved = 0;
                     save_piece_to_file(
                         &torrent,
@@ -180,13 +172,6 @@ pub fn spawn_saver(
                         - (addr as usize - size_progression[file_i_l - 1] as usize);
                     addr = 0;
                     for file_i in file_i_l..=(file_i_r - 2) {
-                        log!(
-                            LogLevel::Info,
-                            "info: {file_i} {bytes_saved} {} addr: {}, file_i_l - 1={}",
-                            torrent.info.files.as_ref().unwrap()[file_i].length,
-                            0,
-                            file_i_l - 1
-                        );
                         save_piece_to_file(
                             &torrent,
                             &src_path,
@@ -239,11 +224,6 @@ pub fn spawn_saver(
                 e.insert(PieceChunksBitmap::new(&torrent, data.piece_i as usize));
                 log!(LogLevel::Debug, "Just added key");
             }
-            log!(
-                LogLevel::Debug,
-                "{:?}",
-                pieces_chunks.get(&data.piece_i).unwrap()
-            );
             let chunks_bitmap = pieces_chunks.get_mut(&data.piece_i).unwrap();
             chunks_bitmap.add_chunk(data.begin as usize);
             if chunks_bitmap.is_piece_ready() {
@@ -254,193 +234,19 @@ pub fn spawn_saver(
                 } else {
                     torrent.info.piece_length
                 };
-                let mut piece_buf;
+                let mut piece_buf = Vec::new();
+
                 if let Some(ref size_progression) = file_inc_length {
-                    log!(
-                        LogLevel::Info,
-                        "INFO: {} {}\nNEXT INFO {:?}",
+                    read_files_piece(
+                        &src_path,
+                        &torrent,
+                        data.piece_i,
                         addr,
-                        addr + if data.piece_i as usize == (torrent.info.piece_hashes.len() - 1) {
-                            torrent.info.length - torrent.info.piece_length * data.piece_i
-                        } else {
-                            torrent.info.piece_length
-                        },
-                        size_progression
-                    );
-                    let file_i_l = bin_search(addr, &size_progression, 0, size_progression.len());
-                    let file_i_r = bin_search(
-                        addr + if data.piece_i as usize == (torrent.info.piece_hashes.len() - 1) {
-                            torrent.info.length - torrent.info.piece_length * data.piece_i
-                        } else {
-                            torrent.info.piece_length
-                        },
+                        piece_length,
+                        &mut piece_buf,
                         &size_progression,
-                        0,
-                        size_progression.len(),
-                    );
-                    if file_i_l == file_i_r {
-                        let mut path = Path::new(&src_path);
-                        let new_path =
-                            path.join(&torrent.info.files.as_ref().unwrap()[file_i_l - 1].path);
-                        path = &new_path;
-                        let mut file = File::options()
-                            .read(true)
-                            .write(true)
-                            .create(true)
-                            .open(&path)
-                            .unwrap();
-                        log!(
-                            LogLevel::Info,
-                            "piece num: {}\n {:?}",
-                            data.piece_i,
-                            chunks_bitmap
-                        );
-                        log!(
-                            LogLevel::Info,
-                            "{} {} {} {} {}",
-                            addr,
-                            file_i_l - 1,
-                            torrent.info.files.as_ref().unwrap()[file_i_l - 1].length,
-                            torrent.info.files.as_ref().unwrap()[file_i_l - 1].path,
-                            data.piece_i
-                        );
-                        let m = file.metadata().unwrap();
-                        file.seek(std::io::SeekFrom::Start(
-                            addr - size_progression[file_i_l - 1],
-                        ))
-                        .unwrap();
-                        piece_buf = vec![0; piece_length as usize];
-                        log!(
-                            LogLevel::Info,
-                            "{} {} {} {} {:?}",
-                            addr,
-                            size_progression[file_i_l - 1],
-                            addr - size_progression[file_i_l - 1],
-                            piece_buf.len(),
-                            m.len()
-                        );
-                        file.read_exact(&mut piece_buf).unwrap();
-                        println!(
-                            "WOOWOWO0: {} {:?}",
-                            piece_buf.len(),
-                            piece_buf
-                                .iter()
-                                .filter(|&&x| x != 0)
-                                .collect::<Vec<&u8>>()
-                                .len()
-                        );
-                        if piece_buf.len()
-                            != piece_buf
-                                .iter()
-                                .filter(|&&x| x != 0)
-                                .collect::<Vec<&u8>>()
-                                .len()
-                        {
-                            println!("WOOWOWO n= {}", path.to_str().unwrap());
-                        }
-                    } else {
-                        piece_buf = Vec::new();
-                        let mut readed_bytes = 0;
-                        let mut path = Path::new(&src_path);
-                        let new_path =
-                            path.join(&torrent.info.files.as_ref().unwrap()[file_i_l - 1].path);
-                        path = &new_path;
-                        let mut file = File::options().read(true).write(true).open(path).unwrap();
-                        file.seek(std::io::SeekFrom::Start(
-                            addr - size_progression[file_i_l - 1],
-                        ))
-                        .unwrap();
-                        let bytes_n = file.read_to_end(&mut piece_buf).unwrap();
-                        println!(
-                            "WOOWOWO1: {} {:?}",
-                            bytes_n,
-                            piece_buf
-                                .iter()
-                                .filter(|&&x| x != 0)
-                                .collect::<Vec<&u8>>()
-                                .len()
-                        );
-                        if bytes_n
-                            != piece_buf
-                                .iter()
-                                .filter(|&&x| x != 0)
-                                .collect::<Vec<&u8>>()
-                                .len()
-                        {
-                            println!("WOOWOWO {:?} n= {}", &piece_buf, path.to_str().unwrap());
-                        }
-                        readed_bytes += bytes_n;
-                        println!("{}", piece_buf.len());
-                        for file_i in file_i_l..=(file_i_r - 2) {
-                            let mut path = Path::new(&src_path);
-                            let new_path =
-                                path.join(&torrent.info.files.as_ref().unwrap()[file_i].path);
-                            path = &new_path;
-                            let mut file =
-                                File::options().read(true).write(true).open(&path).unwrap();
-                            let mut buf = Vec::new();
-                            let bytes_n = file.read_to_end(&mut buf).unwrap();
-                            println!(
-                                "WOOWOWO2: {} {:?}",
-                                bytes_n,
-                                buf.iter().filter(|&&x| x != 0).collect::<Vec<&u8>>().len()
-                            );
-                            if bytes_n
-                                != buf.iter().filter(|&&x| x != 0).collect::<Vec<&u8>>().len()
-                            {
-                                println!("WOOWOWO n= {}", path.to_str().unwrap());
-                            }
-                            log!(
-                                LogLevel::Info,
-                                "bla bla {} {} {}",
-                                file_i,
-                                readed_bytes,
-                                bytes_n,
-                            );
-                            readed_bytes += bytes_n;
-                            piece_buf.extend_from_slice(&buf[..bytes_n]);
-                        }
-                        let mut path = Path::new(&src_path);
-                        let new_path =
-                            path.join(&torrent.info.files.as_ref().unwrap()[file_i_r - 1].path);
-                        path = &new_path;
-                        let mut file = File::options().read(true).write(true).open(path).unwrap();
-                        let piece_size =
-                            if data.piece_i as usize == (torrent.info.piece_hashes.len() - 1) {
-                                torrent.info.length - torrent.info.piece_length * data.piece_i
-                            } else {
-                                torrent.info.piece_length
-                            };
-                        log!(
-                            LogLevel::Info,
-                            "bla bla {} {} {}",
-                            piece_size,
-                            readed_bytes,
-                            piece_buf.len()
-                        );
-                        log!(
-                            LogLevel::Info,
-                            "{file_i_l} {file_i_r} {addr} {:?} \n {:?}",
-                            &size_progression[(file_i_l - 1)..(file_i_r + 1)],
-                            size_progression
-                        );
-                        //panic!("");
-                        let mut buf = vec![0u8; piece_size as usize - readed_bytes];
-                        if !buf.is_empty() {
-                            file.read_exact(&mut buf).unwrap();
-                            println!(
-                                "WOOWOWO22: {} {:?}",
-                                buf.len(),
-                                buf.iter().filter(|&&x| x != 0).collect::<Vec<&u8>>().len()
-                            );
-                            if buf.len()
-                                != buf.iter().filter(|&&x| x != 0).collect::<Vec<&u8>>().len()
-                            {
-                                println!("WOOWOWO n= {}", path.to_str().unwrap());
-                            }
-                            piece_buf.extend_from_slice(&buf);
-                        }
-                    }
+                    )
+                    .unwrap();
                 } else {
                     let mut file = File::options()
                         .read(true)
@@ -451,17 +257,6 @@ pub fn spawn_saver(
                     piece_buf = vec![0u8; piece_length as usize];
                     file.seek(std::io::SeekFrom::Start(addr)).unwrap();
                     file.read_exact(&mut piece_buf).unwrap();
-                }
-                if data.piece_i == 0 {
-                    // log!(LogLevel::Info, "{:?}", piece_buf);
-                    // log!(LogLevel::Info, "{:?}", torrent.info.files.as_ref().unwrap());
-                    // let res = piece_buf.iter().filter(|&&x| x != 0).collect::<Vec<&u8>>();
-                    // println!("{}", res.len());
-                    //panic!("");
-                    let mut file = File::create("/home/mkul1k/Videos/code.bin").unwrap();
-                    file.write_all(&piece_buf).unwrap();
-                    file.flush().unwrap();
-                    // panic!("");
                 }
                 let hash = Torrent::bytes_hash(&piece_buf);
                 if hash != torrent.info.piece_hashes[data.piece_i as usize] {
@@ -490,62 +285,204 @@ pub fn spawn_saver(
     });
 }
 
-// pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, path: &str) -> Vec<usize> {
-//     let mut downloaded_pieces = Vec::new();
-//     let mut pieces_processed = 0;
-//     let mut pieces_done = 0;
-//     if std::path::Path::new(path).exists() {
-//         let mut file = File::options().read(true).open(path).unwrap();
-//         let pieces_i = torrent.info.piece_hashes.len();
-//         let (sender, mut receiver) = mpsc::channel(200);
-//         for i in 0..pieces_i {
-//             let mut piece_buf = vec![0; torrent.info.piece_length as usize];
-//             let read_res = file.read_exact(&mut piece_buf);
-//             if let Err(e) = read_res {
-//                 if e.kind() == ErrorKind::UnexpectedEof {
-//                     break;
-//                 } else {
-//                     panic!("Unexpected error: {:?}", e);
-//                 }
-//             }
-//             pieces_processed += 1;
+fn read_files_piece(
+    src_path: &String,
+    torrent: &Arc<Torrent>,
+    piece_i: u64,
+    addr: u64,
+    piece_length: u64,
+    mut piece_buf: &mut Vec<u8>,
+    size_progression: &Vec<u64>,
+) -> anyhow::Result<()> {
+    let file_i_l = bin_search(addr, &size_progression, 0, size_progression.len());
+    let file_i_r = bin_search(
+        addr + if piece_i as usize == (torrent.info.piece_hashes.len() - 1) {
+            torrent.info.length - torrent.info.piece_length * piece_i
+        } else {
+            torrent.info.piece_length
+        },
+        &size_progression,
+        0,
+        size_progression.len(),
+    );
+    if file_i_l == file_i_r {
+        let mut path = Path::new(&src_path);
+        let new_path = path.join(&torrent.info.files.as_ref().unwrap()[file_i_l - 1].path);
+        path = &new_path;
+        let mut file = File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&path)?;
+        let m = file.metadata()?;
+        file.seek(std::io::SeekFrom::Start(
+            addr - size_progression[file_i_l - 1],
+        ))?;
+        *piece_buf = vec![0u8; piece_length as usize];
+        file.read_exact(&mut piece_buf)?;
+    } else {
+        *piece_buf = Vec::new();
+        let mut readed_bytes = 0;
+        let mut path = Path::new(&src_path);
+        let new_path = path.join(&torrent.info.files.as_ref().unwrap()[file_i_l - 1].path);
+        path = &new_path;
+        let mut file = File::options().read(true).write(true).open(path)?;
+        file.seek(std::io::SeekFrom::Start(
+            addr - size_progression[file_i_l - 1],
+        ))?;
+        let bytes_n = file.read_to_end(&mut piece_buf)?;
+        readed_bytes += bytes_n;
+        for file_i in file_i_l..=(file_i_r - 2) {
+            let mut path = Path::new(&src_path);
+            let new_path = path.join(&torrent.info.files.as_ref().unwrap()[file_i].path);
+            path = &new_path;
+            let mut file = File::options().read(true).write(true).open(&path)?;
+            let mut buf = Vec::new();
+            let bytes_n = file.read_to_end(&mut buf)?;
+            readed_bytes += bytes_n;
+            piece_buf.extend_from_slice(&buf[..bytes_n]);
+        }
+        let mut path = Path::new(&src_path);
+        let new_path = path.join(&torrent.info.files.as_ref().unwrap()[file_i_r - 1].path);
+        path = &new_path;
+        let mut file = File::options().read(true).write(true).open(path)?;
+        let piece_size = if piece_i as usize == (torrent.info.piece_hashes.len() - 1) {
+            torrent.info.length - torrent.info.piece_length * piece_i
+        } else {
+            torrent.info.piece_length
+        };
+        let mut buf = vec![0u8; piece_size as usize - readed_bytes];
+        if !buf.is_empty() {
+            file.read_exact(&mut buf)?;
+            piece_buf.extend_from_slice(&buf);
+        }
+    }
+    Ok(())
+}
 
-//             if let Ok((i, have)) = receiver.try_recv() {
-//                 pieces_done += 1;
-//                 if have {
-//                     downloaded_pieces.push(i);
-//                 }
-//             }
-//             {
-//                 let sender = sender.clone();
-//                 let torrent = torrent.clone();
-//                 tokio::task::spawn_blocking(move || {
-//                     let hash = Torrent::bytes_hash(&piece_buf);
-//                     if hash == torrent.info.piece_hashes[i] {
-//                         sender.try_send((i, true)).unwrap();
-//                         log!(LogLevel::Info, "Piece {} is already downloaded", i);
-//                     } else {
-//                         sender.try_send((i, false)).unwrap();
-//                     }
-//                 });
-//             }
-//         }
-//         while pieces_done < pieces_processed {
-//             if let Ok(Some((i, have))) =
-//                 timeout(std::time::Duration::from_secs(10), receiver.recv()).await
-//             {
-//                 pieces_done += 1;
-//                 if have {
-//                     downloaded_pieces.push(i);
-//                 }
-//             } else {
-//                 log!(LogLevel::Fatal, "Not all tasks joined");
-//                 panic!("Not all tasks joined");
-//             }
-//         }
-//     }
-//     downloaded_pieces
-// }
+pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, src_path: &str) -> Vec<usize> {
+    let mut downloaded_pieces = Vec::new();
+    let mut pieces_processed = 0;
+    let mut pieces_done = 0;
+
+    if std::path::Path::new(src_path).exists() {
+        let pieces_i = torrent.info.piece_hashes.len();
+        let (sender, mut receiver) = mpsc::channel(200);
+        if let Some(ref files) = torrent.info.files {
+            let size_progression = {
+                let mut arr = Vec::with_capacity(files.len());
+                arr.push(0);
+                for (i, file) in files.iter().enumerate() {
+                    arr.push(arr[i] + file.length);
+                }
+                arr
+            };
+            for i in 0..pieces_i {
+                let piece_length = if i == torrent.info.piece_hashes.len() - 1 {
+                    torrent.info.length - i as u64 * torrent.info.piece_length
+                } else {
+                    torrent.info.piece_length
+                };
+                let mut piece_buf = Vec::new();
+                let addr = i as u64 * torrent.info.piece_length;
+                if let Err(e) = read_files_piece(
+                    &src_path.to_string(),
+                    &torrent,
+                    i as u64,
+                    addr,
+                    piece_length,
+                    &mut piece_buf,
+                    &size_progression,
+                ) {
+                    log!(
+                        LogLevel::Info,
+                        "{:?} {} {} {}",
+                        e,
+                        i,
+                        piece_length,
+                        addr > torrent.info.length
+                    );
+                } else {
+                    let sender = sender.clone();
+                    let torrent = torrent.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let hash = Torrent::bytes_hash(&piece_buf);
+                        if hash == torrent.info.piece_hashes[i] {
+                            sender.try_send((i, true)).unwrap();
+                            log!(LogLevel::Info, "Piece {} is already downloaded", i);
+                        } else {
+                            sender.try_send((i, false)).unwrap();
+                        }
+                    });
+                    pieces_processed += 1;
+                }
+
+                if let Ok((i, have)) = receiver.try_recv() {
+                    pieces_done += 1;
+                    if have {
+                        downloaded_pieces.push(i);
+                    }
+                }
+            }
+        } else {
+            let mut file = File::options().read(true).open(src_path).unwrap();
+
+            for i in 0..pieces_i {
+                let piece_length = if i == torrent.info.piece_hashes.len() - 1 {
+                    torrent.info.length - i as u64 * torrent.info.piece_length
+                } else {
+                    torrent.info.piece_length
+                };
+                let mut piece_buf = vec![0; piece_length as usize];
+                let read_res = file.read_exact(&mut piece_buf);
+                if let Err(e) = read_res {
+                    if e.kind() == ErrorKind::UnexpectedEof {
+                        break;
+                    } else {
+                        panic!("Unexpected error: {:?}", e);
+                    }
+                }
+                pieces_processed += 1;
+
+                if let Ok((i, have)) = receiver.try_recv() {
+                    pieces_done += 1;
+                    if have {
+                        downloaded_pieces.push(i);
+                    }
+                }
+                {
+                    let sender = sender.clone();
+                    let torrent = torrent.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let hash = Torrent::bytes_hash(&piece_buf);
+                        if hash == torrent.info.piece_hashes[i] {
+                            sender.try_send((i, true)).unwrap();
+                            log!(LogLevel::Info, "Piece {} is already downloaded", i);
+                        } else {
+                            sender.try_send((i, false)).unwrap();
+                        }
+                    });
+                }
+            }
+        }
+
+        while pieces_done < pieces_processed {
+            println!("{} {}", pieces_done, pieces_processed);
+            if let Ok(Some((i, have))) =
+                timeout(std::time::Duration::from_secs(10), receiver.recv()).await
+            {
+                pieces_done += 1;
+                if have {
+                    downloaded_pieces.push(i);
+                }
+            } else {
+                log!(LogLevel::Fatal, "Not all tasks joined");
+                panic!("Not all tasks joined");
+            }
+        }
+    }
+    downloaded_pieces
+}
 
 fn save_piece_to_file(torrent: &Arc<Torrent>, path: &String, file_i: usize, buf: &[u8], addr: u64) {
     let mut path = Path::new(path);
@@ -553,7 +490,6 @@ fn save_piece_to_file(torrent: &Arc<Torrent>, path: &String, file_i: usize, buf:
     path = &new_path;
     if let Some(root) = path.parent() {
         if !root.exists() {
-            log!(LogLevel::Info, "{:?}", root);
             std::fs::create_dir_all(root).unwrap();
         }
     }
@@ -563,14 +499,8 @@ fn save_piece_to_file(torrent: &Arc<Torrent>, path: &String, file_i: usize, buf:
         .create(true)
         .open(path)
         .unwrap();
-    log!(
-        LogLevel::Info,
-        "Saved {} {} {}",
-        path.to_str().unwrap(),
-        addr,
-        buf.len()
-    );
     file.seek(std::io::SeekFrom::Start(addr)).unwrap();
     file.write_all(buf).unwrap();
-    file.set_len(addr + buf.len() as u64).unwrap();
+    file.set_len(torrent.info.files.as_ref().unwrap()[file_i].length)
+        .unwrap();
 }

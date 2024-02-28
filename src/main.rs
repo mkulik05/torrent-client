@@ -74,17 +74,6 @@ async fn main() {
         }
         "download" => {
             let torrent = handle_result(Torrent::new(&args[4]));
-            println!(
-                "{:?}",
-                torrent
-                    .info
-                    .files
-                    .as_ref()
-                    .unwrap()
-                    .iter()
-                    .map(|x: &TorrentFile| x.path.clone())
-                    .collect::<Vec<String>>()
-            );
             let file_path = if Path::new(&args[3]).is_dir() {
                 Path::new(&args[3]).join(&torrent.info.name)
             } else {
@@ -103,7 +92,7 @@ async fn main() {
                 .clone()
                 .find_working_peers(send_data.clone(), send_status.clone());
 
-            let pieces_done = Vec::new(); //saver::find_downloaded_pieces(torrent.clone(), file_path).await;
+            let pieces_done = saver::find_downloaded_pieces(torrent.clone(), file_path).await;
 
             saver::spawn_saver(
                 file_path.to_string(),
@@ -271,6 +260,9 @@ async fn main() {
                         };
                         drop(permit);
                     });
+                } else {
+                    log!(LogLevel::Info, "Finished downloading");
+                    break;
                 }
             }
         }

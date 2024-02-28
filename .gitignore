@@ -5,3 +5,5 @@ log*.txt
 *svg
 perf*
 callgrind.*
+.vscode
+.idea
