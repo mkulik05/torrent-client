@@ -79,11 +79,12 @@ impl Peer {
             status: PeerStatus::NotConnected,
         })
     }
-    pub async fn reconnect(&mut self, dur: Duration) -> anyhow::Result<()> {
+    pub async fn reconnect(&mut self, torrent: &Torrent, dur: Duration) -> anyhow::Result<()> {
         self.socket = match timeout(dur, TcpStream::connect(&self.peer_addr)).await {
             Ok(res) => res?,
             Err(_) => anyhow::bail!("Connection timeout"),
         };
+        self.peer_id = Some(self.handshake(torrent, Duration::from_secs(4)).await?);
         Ok(())
     }
     pub async fn connect(&mut self, torrent: &Torrent) -> anyhow::Result<()> {
@@ -95,7 +96,7 @@ impl Peer {
                     "Connecting to peer: {}",
                     self.socket.peer_addr()?
                 );
-                self.peer_id = Some(self.handshake(torrent).await?);
+                self.peer_id = Some(self.handshake(torrent, Duration::from_secs(4)).await?);
                 let mut timeout = 1;
                 let mut attempts_n = 0;
                 while attempts_n < MAX_INTERESTED_ATTEMPTS {
@@ -120,7 +121,7 @@ impl Peer {
                 }
             }
             PeerStatus::Choked => {
-                self.reconnect(Duration::from_secs(2)).await?;
+                self.reconnect(torrent, Duration::from_secs(2)).await?;
                 Ok(())
             }
         }
@@ -300,7 +301,7 @@ impl Peer {
         }
     }
 
-    async fn handshake(&mut self, torrent: &Torrent) -> anyhow::Result<String> {
+    async fn handshake(&mut self, torrent: &Torrent, time: Duration) -> anyhow::Result<String> {
         let mut msg = Vec::new();
         msg.push(b"\x13"[0]); // 0x13 = 19
         msg.extend_from_slice(b"BitTorrent protocol");
@@ -310,7 +311,7 @@ impl Peer {
         self.socket.write_all(&msg).await?;
         log!(LogLevel::Debug, "Sended handskake");
         let mut response = [0; 68];
-        self.socket.read_exact(&mut response).await?;
+        let _ = timeout(time, self.socket.read_exact(&mut response)).await?;
         log!(LogLevel::Debug, "Received answer handskake");
         let peer_id = &response[response.len() - 20..response.len()];
         self.send_message(&PeerMessage::Bitfield(vec![

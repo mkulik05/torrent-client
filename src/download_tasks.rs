@@ -3,7 +3,7 @@ use std::ops::Range;
 use crate::torrent::Torrent;
 use std::sync::Arc;
 
-const CHUNKS_PER_TASK: u64 = 10;
+const CHUNKS_PER_TASK: u64 = 60;
 pub const MAX_CHUNKS_TASKS: usize = 100;
 pub const CHUNK_SIZE: u64 = 16384;
 

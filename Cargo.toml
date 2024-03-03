@@ -15,4 +15,4 @@ serde = { version = "1.0.136", features = ["derive"] }
 serde_json = "1.0.105"                                           
 serde_urlencoded = "0.7.1"                  
 sha1 = "0.10.1"
-tokio = { version = "1.23.0", features = ["full", "tracing"] }
+tokio = { features = ["full", "tracing"] }

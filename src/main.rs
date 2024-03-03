@@ -1,5 +1,4 @@
 use crate::download::DataPiece;
-use std::env;
 use std::time::Duration;
 mod bencode;
 mod download;
@@ -11,7 +10,6 @@ mod torrent;
 mod tracker;
 use crate::download_tasks::CHUNK_SIZE;
 use crate::logger::{log, LogLevel};
-use crate::torrent::TorrentFile;
 use download::DownloadReq;
 use download_tasks::{ChunksTask, PieceTask, MAX_CHUNKS_TASKS};
 use peers::Peer;
@@ -49,14 +47,15 @@ async fn main() {
         "/tmp/log{}.txt",
         chrono::Local::now().format("%d-%m-%Y_%H-%M-%S")
     )));
-    let args: Vec<String> = Vec::from([
-        "".to_string(),
-        "download".to_string(),
-        "".to_string(),
-        "/home/mkul1k/Videos".to_string(),
-        "/home/mkul1k/Documents/JetBrains PhpStorm 2023.1 x64 [ENG] [rutracker-6413537].torrent"
-            .to_string(),
-    ]);
+    // let args: Vec<String> = Vec::from([
+    //     "".to_string(),
+    //     "download".to_string(),
+    //     "".to_string(),
+    //     "/home/mkul1k/Videos".to_string(),
+    //     "/home/mkul1k/Documents/JetBrains PhpStorm 2023.1 x64 [ENG] [rutracker-6413537].torrent"
+    //         .to_string(),
+    // ]);
+    let args = std::env::args().collect::<Vec<String>>();
     let command = &args[1];
 
     match command.as_str() {

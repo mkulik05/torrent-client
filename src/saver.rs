@@ -314,7 +314,6 @@ fn read_files_piece(
             .write(true)
             .create(true)
             .open(&path)?;
-        let m = file.metadata()?;
         file.seek(std::io::SeekFrom::Start(
             addr - size_progression[file_i_l - 1],
         ))?;

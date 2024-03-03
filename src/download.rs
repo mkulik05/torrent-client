@@ -1,13 +1,12 @@
+use crate::download_tasks::ChunksTask;
 use crate::logger::{log, LogLevel};
 use crate::peers::{Peer, PeerMessage, PeerStatus};
 use crate::torrent::Torrent;
 use crate::DownloadEvents;
 use std::io::ErrorKind;
-use crate::download_tasks::ChunksTask;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::Sender;
-
 
 #[derive(Debug)]
 pub struct DownloadReq {
@@ -29,13 +28,34 @@ impl DownloadReq {
             task,
         }
     }
+
     pub async fn request_data(
         mut self,
         error_sender: Sender<DownloadEvents>,
     ) -> anyhow::Result<()> {
         if let PeerStatus::NotConnected | PeerStatus::Choked = self.peer.status {
             log!(LogLevel::Debug, "Peer is not ready for downloading yet");
-            self.peer.connect(&self.torrent).await?;
+            if let Err(e) = self.peer.connect(&self.torrent).await {
+                match e.downcast_ref::<std::io::Error>() {
+                    Some(e) => {
+                        if let ErrorKind::BrokenPipe | ErrorKind::NotConnected = e.kind() {
+                            self.peer.reconnect(&self.torrent, Duration::from_secs(2)).await?;
+                            log!(LogLevel::Debug, "Reconnected to peer");
+                        } else {
+                            error_sender
+                                .send(DownloadEvents::PeerAdd(self.peer))
+                                .await?;
+                            anyhow::bail!("Peer error: {}", e);
+                        }
+                    }
+                    None => {
+                        error_sender
+                            .send(DownloadEvents::PeerAdd(self.peer))
+                            .await?;
+                        anyhow::bail!("Peer error: {}", e);
+                    }
+                }
+            };
         }
         log!(
             LogLevel::Debug,
@@ -70,25 +90,21 @@ impl DownloadReq {
                 );
                 match e.downcast_ref::<std::io::Error>() {
                     Some(e) => {
-                        if e.kind() == ErrorKind::BrokenPipe {
-                            let peer = Peer::new(
-                                &self.peer.peer_addr,
-                                self.peer.data_sender,
-                                Duration::from_secs(2),
-                            )
-                            .await?;
+                        if let ErrorKind::BrokenPipe | ErrorKind::NotConnected = e.kind() {
+                            self.peer.reconnect(&self.torrent, Duration::from_secs(2)).await?;
                             log!(LogLevel::Debug, "Reconnected to peer");
-                            error_sender.send(DownloadEvents::PeerAdd(peer)).await?;
                         } else {
                             error_sender
                                 .send(DownloadEvents::PeerAdd(self.peer))
                                 .await?;
+                            anyhow::bail!("Peer error: {}", e)
                         }
                     }
                     None => {
                         error_sender
                             .send(DownloadEvents::PeerAdd(self.peer))
                             .await?;
+                        anyhow::bail!("Peer error: {}", e);
                     }
                 }
                 error_sender
@@ -117,8 +133,12 @@ impl DownloadReq {
             );
             if let Some(e) = e.downcast_ref::<std::io::Error>() {
                 log!(LogLevel::Debug, "error:kind : {}", e.kind());
-                if let ErrorKind::ConnectionRefused | ErrorKind::ConnectionReset | ErrorKind::NotConnected | ErrorKind::UnexpectedEof = e.kind() {
-                    self.peer.reconnect(Duration::from_secs(2)).await?;
+                if let ErrorKind::ConnectionRefused
+                | ErrorKind::ConnectionReset
+                | ErrorKind::NotConnected
+                | ErrorKind::UnexpectedEof = e.kind()
+                {
+                    self.peer.reconnect(&self.torrent, Duration::from_secs(2)).await?;
                 }
             }
 
