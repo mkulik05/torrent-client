@@ -1,7 +1,9 @@
-use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{IoSlice, Write};
 use std::ops::Index;
+
+use serde::Serialize;
+
 #[derive(Clone, Debug, Serialize)]
 pub enum BencodeValue {
     Dict(HashMap<String, Self>),

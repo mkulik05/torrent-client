@@ -1,11 +1,13 @@
-use crate::download::DataPiece;
-use crate::logger::{log, LogLevel};
-use crate::torrent::Torrent;
 use std::time::Duration;
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::Sender;
 use tokio::time::timeout;
+
+use crate::download::DataPiece;
+use crate::logger::{log, LogLevel};
+use crate::torrent::Torrent;
 
 const MAX_INTERESTED_ATTEMPTS: u8 = 3;
 

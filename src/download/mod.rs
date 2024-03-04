@@ -1,12 +1,16 @@
-use crate::download_tasks::ChunksTask;
+pub mod tasks;
+
+use std::io::ErrorKind;
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::sync::mpsc::Sender;
+
 use crate::logger::{log, LogLevel};
 use crate::peers::{Peer, PeerMessage, PeerStatus};
 use crate::torrent::Torrent;
 use crate::DownloadEvents;
-use std::io::ErrorKind;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::mpsc::Sender;
+use tasks::ChunksTask;
 
 #[derive(Debug)]
 pub struct DownloadReq {
@@ -39,7 +43,9 @@ impl DownloadReq {
                 match e.downcast_ref::<std::io::Error>() {
                     Some(e) => {
                         if let ErrorKind::BrokenPipe | ErrorKind::NotConnected = e.kind() {
-                            self.peer.reconnect(&self.torrent, Duration::from_secs(2)).await?;
+                            self.peer
+                                .reconnect(&self.torrent, Duration::from_secs(2))
+                                .await?;
                             log!(LogLevel::Debug, "Reconnected to peer");
                         } else {
                             error_sender
@@ -91,7 +97,9 @@ impl DownloadReq {
                 match e.downcast_ref::<std::io::Error>() {
                     Some(e) => {
                         if let ErrorKind::BrokenPipe | ErrorKind::NotConnected = e.kind() {
-                            self.peer.reconnect(&self.torrent, Duration::from_secs(2)).await?;
+                            self.peer
+                                .reconnect(&self.torrent, Duration::from_secs(2))
+                                .await?;
                             log!(LogLevel::Debug, "Reconnected to peer");
                         } else {
                             error_sender
@@ -121,7 +129,7 @@ impl DownloadReq {
             .wait_for_msg(
                 &PeerMessage::Piece(Vec::new()),
                 (self.task.chunks.end - self.task.chunks.start) as u32,
-                Some(std::time::Duration::from_secs(60)),
+                Some(Duration::from_secs(60)),
             )
             .await
         {
@@ -138,7 +146,9 @@ impl DownloadReq {
                 | ErrorKind::NotConnected
                 | ErrorKind::UnexpectedEof = e.kind()
                 {
-                    self.peer.reconnect(&self.torrent, Duration::from_secs(2)).await?;
+                    self.peer
+                        .reconnect(&self.torrent, Duration::from_secs(2))
+                        .await?;
                 }
             }
 

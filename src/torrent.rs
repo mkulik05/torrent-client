@@ -1,9 +1,11 @@
-use crate::bencode::BencodeValue;
-use crate::logger::{log, LogLevel};
-use sha1::{Digest, Sha1};
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
+
+use sha1::{Digest, Sha1};
+
+use crate::bencode::BencodeValue;
+use crate::logger::{log, LogLevel};
 
 #[derive(Debug)]
 pub struct TorrentFile {
@@ -58,7 +60,7 @@ impl Torrent {
                 let file = TorrentFile {
                     length: len as u64,
                     path: res_path.to_str().unwrap().to_owned(),
-                };  
+                };
                 length += len as u64;
                 res.push(file)
             }
@@ -111,5 +113,13 @@ impl Torrent {
         let mut hasher = Sha1::new();
         hasher.update(src);
         hasher.finalize().to_vec()
+    }
+
+    pub fn get_piece_length(&self, piece_i: usize) -> u64 {
+        if piece_i == self.info.piece_hashes.len() - 1 {
+            self.info.length - piece_i as u64 * self.info.piece_length
+        } else {
+            self.info.piece_length
+        }
     }
 }

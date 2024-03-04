@@ -1,14 +1,17 @@
+use std::fmt::Write;
+use std::sync::Arc;
+use std::time::Duration;
+
+use rand::distributions::{Alphanumeric, DistString};
+use tokio::sync::mpsc::Sender;
+
 use crate::bencode::BencodeValue;
 use crate::download::DataPiece;
 use crate::logger::{log, LogLevel};
 use crate::peers::Peer;
 use crate::torrent::Torrent;
 use crate::DownloadEvents;
-use rand::distributions::{Alphanumeric, DistString};
-use std::fmt::Write;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::mpsc::Sender;
+
 pub struct TrackerReq {
     pub info_hash: String,
     pub peer_id: String,
@@ -89,7 +92,7 @@ impl TrackerReq {
 }
 
 impl TrackerResp {
-    // Discover task - found working peers, sep task to immidiatly
+    // Discover task - found working peers, sep task to immediately
     // start working with discovered peers
     pub fn find_working_peers(
         self: Arc<Self>,

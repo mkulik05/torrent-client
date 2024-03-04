@@ -1,28 +1,28 @@
-use crate::download::DataPiece;
+use std::collections::VecDeque;
+use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
+
+use tokio::sync::mpsc;
+use tokio::time::timeout;
+
+use download::tasks::{ChunksTask, PieceTask, MAX_CHUNKS_TASKS};
+use download::DownloadReq;
+use peers::Peer;
+use torrent::Torrent;
+use tracker::TrackerReq;
+
+use crate::download::tasks::CHUNK_SIZE;
+use crate::download::DataPiece;
+use crate::logger::{log, LogLevel};
+
 mod bencode;
 mod download;
-mod download_tasks;
 mod logger;
 mod peers;
 mod saver;
 mod torrent;
 mod tracker;
-use crate::download_tasks::CHUNK_SIZE;
-use crate::logger::{log, LogLevel};
-use download::DownloadReq;
-use download_tasks::{ChunksTask, PieceTask, MAX_CHUNKS_TASKS};
-use peers::Peer;
-use std::collections::VecDeque;
-use std::path::Path;
-use std::sync::Arc;
-use tokio::sync::mpsc;
-use tokio::sync::Semaphore;
-use tokio::time::timeout;
-use torrent::Torrent;
-use tracker::TrackerReq;
-
-const SEMAPHORE_N: usize = 10;
 
 enum DownloadEvents {
     ChunksFail(ChunksTask),
@@ -31,22 +31,12 @@ enum DownloadEvents {
     PeerAdd(Peer),
 }
 
-fn handle_result<T>(res: anyhow::Result<T>) -> T {
-    match res {
-        Ok(v) => v,
-        Err(err) => {
-            log!(LogLevel::Fatal, "error {:?}", err);
-            panic!("error {:?}", err);
-        }
-    }
-}
-
 #[tokio::main]
-async fn main() {
-    handle_result(logger::Logger::init(format!(
+async fn main() -> anyhow::Result<()> {
+    logger::Logger::init(format!(
         "/tmp/log{}.txt",
         chrono::Local::now().format("%d-%m-%Y_%H-%M-%S")
-    )));
+    ))?;
     // let args: Vec<String> = Vec::from([
     //     "".to_string(),
     //     "download".to_string(),
@@ -72,7 +62,7 @@ async fn main() {
             );
         }
         "download" => {
-            let torrent = handle_result(Torrent::new(&args[4]));
+            let torrent = Torrent::new(&args[4])?;
             let file_path = if Path::new(&args[3]).is_dir() {
                 Path::new(&args[3]).join(&torrent.info.name)
             } else {
@@ -80,7 +70,7 @@ async fn main() {
             };
             let file_path = file_path.to_str().unwrap();
             let tracker_req = TrackerReq::init(&torrent);
-            let tracker_resp = Arc::new(handle_result(tracker_req.send(&torrent).await));
+            let tracker_resp = Arc::new(tracker_req.send(&torrent).await?);
             let torrent = Arc::new(torrent);
             let (send_status, mut get_status) = mpsc::channel(270);
             let (send_data, get_data) = mpsc::channel::<DataPiece>(50);
@@ -93,26 +83,32 @@ async fn main() {
 
             let pieces_done = saver::find_downloaded_pieces(torrent.clone(), file_path).await;
 
-            saver::spawn_saver(
+            let saver_task = saver::spawn_saver(
                 file_path.to_string(),
                 torrent.clone(),
                 get_data,
                 send_status.clone(),
                 pieces_done.len(),
             );
-
-            let mut pieces_tasks = download_tasks::get_piece_tasks(torrent.clone(), pieces_done);
+            let mut pieces_tasks = download::tasks::get_piece_tasks(torrent.clone(), pieces_done);
             let mut chunks_tasks = VecDeque::new();
 
-            download_tasks::add_chunks_tasks(
+            download::tasks::add_chunks_tasks(
                 &mut pieces_tasks,
                 &mut chunks_tasks,
                 MAX_CHUNKS_TASKS - 1,
             );
 
-            let semaphore = Arc::new(Semaphore::new(SEMAPHORE_N));
             let mut no_free_peers = false;
             loop {
+                // checking that saver task is alive
+                if saver_task.is_finished() {
+                    if let Ok(res) = saver_task.await {
+                        res?;
+                    }
+                    break;
+                }
+
                 // if no free peers found, waiting for any message for some time,
                 // if none appeared, searching for peers again
                 let download_status = if no_free_peers {
@@ -174,9 +170,8 @@ async fn main() {
                     }
                 }
 
-                download_tasks::add_chunks_tasks(&mut pieces_tasks, &mut chunks_tasks, 1);
+                download::tasks::add_chunks_tasks(&mut pieces_tasks, &mut chunks_tasks, 1);
                 if !chunks_tasks.is_empty() {
-                    let permit = semaphore.clone().acquire_owned().await.unwrap();
                     let send_status = send_status.clone();
                     let send_data = send_data.clone();
                     let some_pos = peers.iter().position(|x| x.is_some());
@@ -257,7 +252,6 @@ async fn main() {
                                 log!(LogLevel::Fatal, "Failed to connect to peer after several attemplts, it's lost... {}", addr);
                             }
                         };
-                        drop(permit);
                     });
                 } else {
                     log!(LogLevel::Info, "Finished downloading");
@@ -267,4 +261,5 @@ async fn main() {
         }
         _ => println!("unknown command: {}", args[1]),
     }
+    Ok(())
 }

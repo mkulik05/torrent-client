@@ -1,4 +1,3 @@
-use crate::logger::{log, LogLevel};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::ErrorKind;
@@ -7,12 +6,15 @@ use std::io::Seek;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
+
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
+use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 use crate::download::DataPiece;
+use crate::logger::{log, LogLevel};
 use crate::{DownloadEvents, Torrent};
 
 #[derive(Debug)]
@@ -23,11 +25,7 @@ struct PieceChunksBitmap {
 
 impl PieceChunksBitmap {
     fn new(torrent: &Torrent, piece_i: usize) -> Self {
-        let piece_length = if piece_i == torrent.info.piece_hashes.len() - 1 {
-            torrent.info.length - piece_i as u64 * torrent.info.piece_length
-        } else {
-            torrent.info.piece_length
-        };
+        let piece_length = torrent.get_piece_length(piece_i);
         let chunks_n = (piece_length as f64 / crate::CHUNK_SIZE as f64).ceil() as i32;
         let mut last_chunk_mask = 0;
         let mut mask = 128;
@@ -44,14 +42,14 @@ impl PieceChunksBitmap {
         }
     }
     fn add_chunk(&mut self, begin: usize) {
-        let chunk_i = begin / crate::download_tasks::CHUNK_SIZE as usize;
+        let chunk_i = begin / crate::download::tasks::CHUNK_SIZE as usize;
         let bitmap_cell_i = chunk_i / 8;
         let mut mask = 128;
         mask >>= chunk_i % 8;
         self.bitmap[bitmap_cell_i] |= mask;
     }
     fn chunk_exist(&self, begin: usize) -> bool {
-        let chunk_i = begin / crate::download_tasks::CHUNK_SIZE as usize;
+        let chunk_i = begin / crate::download::tasks::CHUNK_SIZE as usize;
         let bitmap_cell_i = chunk_i / 8;
         let mut mask = 128;
         mask >>= chunk_i % 8;
@@ -95,8 +93,11 @@ pub fn spawn_saver(
     mut get_data: Receiver<DataPiece>,
     send_status: Sender<DownloadEvents>,
     pieces_done: usize,
-) {
-    let file_inc_length = if let Some(ref files) = torrent.info.files {
+) -> JoinHandle<anyhow::Result<()>> {
+    // variable containing increasing array starting from 0;
+    // each element arr[i] equals arr[i - 1] + file_sizes[i]
+    // required to quickly find to which file write input data
+    let files_lengthes = if let Some(ref files) = torrent.info.files {
         let mut arr = Vec::with_capacity(files.len());
         arr.push(0);
         for (i, file) in files.iter().enumerate() {
@@ -132,84 +133,33 @@ pub fn spawn_saver(
                 );
                 continue;
             }
-            let mut addr = data.piece_i * torrent.info.piece_length + data.begin;
-            if let Some(ref size_progression) = file_inc_length {
+            let addr = data.piece_i * torrent.info.piece_length + data.begin;
+            if let Some(ref size_progression) = files_lengthes {
                 let file_i_l = bin_search(addr, &size_progression, 0, size_progression.len());
                 let r_addr = addr + data.buf.len() as u64;
                 let file_i_r = bin_search(r_addr, &size_progression, 0, size_progression.len());
-                println!("fdsfds {:?} {}", r_addr, addr);
-                println!("{:?} {}", data.piece_i, data.begin);
                 if file_i_l == file_i_r {
+                    // data if from one file
                     save_piece_to_file(
                         &torrent,
                         &src_path,
                         file_i_l - 1,
                         &data.buf,
                         addr - size_progression[file_i_l - 1],
-                    );
+                    )?;
                 } else {
-                    let mut bytes_saved = 0;
-                    save_piece_to_file(
-                        &torrent,
+                    // data is from different files
+                    save_data_to_files(
                         &src_path,
-                        file_i_l - 1,
-                        &data.buf[bytes_saved..(bytes_saved + {
-                            let mut border_r =
-                                torrent.info.files.as_ref().unwrap()[file_i_l - 1].length as usize;
-                            border_r = border_r - (addr - size_progression[file_i_l - 1]) as usize;
-                            if (bytes_saved + border_r) > data.buf.len() {
-                                println!("{} {}", data.buf.len(), bytes_saved);
-                                data.buf.len() - bytes_saved
-                            } else {
-                                border_r
-                            }
-                        })],
-                        addr - size_progression[file_i_l - 1],
-                    );
-                    // println!("{} {}", torrent.info.files.as_ref().unwrap()[file_i].length as usize, size_progression[file_i] as usize, size_progression[file_i] as usize);
-                    bytes_saved += torrent.info.files.as_ref().unwrap()[file_i_l - 1].length
-                        as usize
-                        - (addr as usize - size_progression[file_i_l - 1] as usize);
-                    addr = 0;
-                    for file_i in file_i_l..=(file_i_r - 2) {
-                        save_piece_to_file(
-                            &torrent,
-                            &src_path,
-                            file_i,
-                            &data.buf[bytes_saved..(bytes_saved + {
-                                let border_r =
-                                    torrent.info.files.as_ref().unwrap()[file_i].length as usize;
-                                if (bytes_saved + border_r) > data.buf.len() {
-                                    println!("{} {}", data.buf.len(), bytes_saved);
-                                    data.buf.len() - bytes_saved
-                                } else {
-                                    border_r
-                                }
-                            })],
-                            addr,
-                        );
-                        // println!("{} {}", torrent.info.files.as_ref().unwrap()[file_i].length as usize, size_progression[file_i] as usize, size_progression[file_i] as usize);
-                        bytes_saved += torrent.info.files.as_ref().unwrap()[file_i].length as usize;
-                        //addr = 0;
-                    }
-                    save_piece_to_file(
-                        &torrent,
-                        &src_path,
-                        file_i_r - 1,
-                        &data.buf[bytes_saved..(bytes_saved + {
-                            let border_r =
-                                torrent.info.files.as_ref().unwrap()[file_i_r - 1].length as usize;
-                            if (bytes_saved + border_r) > data.buf.len() {
-                                println!("{} {}", data.buf.len(), bytes_saved);
-                                data.buf.len() - bytes_saved
-                            } else {
-                                border_r
-                            }
-                        })],
-                        0,
-                    );
+                        torrent.clone(),
+                        &data,
+                        &size_progression,
+                        file_i_l,
+                        file_i_r,
+                    )?;
                 }
             } else {
+                // one file case
                 let mut file = File::options()
                     .read(true)
                     .write(true)
@@ -219,6 +169,8 @@ pub fn spawn_saver(
                 file.seek(std::io::SeekFrom::Start(addr)).unwrap();
                 file.write_all(&data.buf).unwrap();
             };
+
+            // adding chunk to bitmap
             if let std::collections::hash_map::Entry::Vacant(e) = pieces_chunks.entry(data.piece_i)
             {
                 e.insert(PieceChunksBitmap::new(&torrent, data.piece_i as usize));
@@ -227,17 +179,13 @@ pub fn spawn_saver(
             let chunks_bitmap = pieces_chunks.get_mut(&data.piece_i).unwrap();
             chunks_bitmap.add_chunk(data.begin as usize);
             if chunks_bitmap.is_piece_ready() {
-                //panic!("");
                 let addr = data.piece_i * torrent.info.piece_length;
-                let piece_length = if data.piece_i as usize == torrent.info.piece_hashes.len() - 1 {
-                    torrent.info.length - data.piece_i * torrent.info.piece_length
-                } else {
-                    torrent.info.piece_length
-                };
+                let piece_length = torrent.get_piece_length(data.piece_i as usize);
                 let mut piece_buf = Vec::new();
 
-                if let Some(ref size_progression) = file_inc_length {
-                    read_files_piece(
+                // reading piece from file(s)
+                if let Some(ref size_progression) = files_lengthes {
+                    read_piece_from_files(
                         &src_path,
                         &torrent,
                         data.piece_i,
@@ -245,8 +193,7 @@ pub fn spawn_saver(
                         piece_length,
                         &mut piece_buf,
                         &size_progression,
-                    )
-                    .unwrap();
+                    )?;
                 } else {
                     let mut file = File::options()
                         .read(true)
@@ -282,10 +229,76 @@ pub fn spawn_saver(
                 }
             }
         }
-    });
+        Ok(())
+    })
 }
 
-fn read_files_piece(
+fn save_data_to_files(
+    src_path: &String,
+    torrent: Arc<Torrent>,
+    data: &DataPiece,
+    size_progression: &Vec<u64>,
+    file_i_l: usize,
+    file_i_r: usize,
+) -> anyhow::Result<()> {
+    let mut addr = data.piece_i * torrent.info.piece_length + data.begin;
+    let mut bytes_saved = 0;
+    save_piece_to_file(
+        &torrent,
+        &src_path,
+        file_i_l - 1,
+        &data.buf[bytes_saved..(bytes_saved + {
+            let mut border_r = torrent.info.files.as_ref().unwrap()[file_i_l - 1].length as usize;
+            border_r = border_r - (addr - size_progression[file_i_l - 1]) as usize;
+            if (bytes_saved + border_r) > data.buf.len() {
+                data.buf.len() - bytes_saved
+            } else {
+                border_r
+            }
+        })],
+        addr - size_progression[file_i_l - 1],
+    )?;
+    // println!("{} {}", torrent.info.files.as_ref().unwrap()[file_i].length as usize, size_progression[file_i] as usize, size_progression[file_i] as usize);
+    bytes_saved += torrent.info.files.as_ref().unwrap()[file_i_l - 1].length as usize
+        - (addr as usize - size_progression[file_i_l - 1] as usize);
+    addr = 0;
+    for file_i in file_i_l..=(file_i_r - 2) {
+        save_piece_to_file(
+            &torrent,
+            &src_path,
+            file_i,
+            &data.buf[bytes_saved..(bytes_saved + {
+                let border_r = torrent.info.files.as_ref().unwrap()[file_i].length as usize;
+                if (bytes_saved + border_r) > data.buf.len() {
+                    data.buf.len() - bytes_saved
+                } else {
+                    border_r
+                }
+            })],
+            addr,
+        )?;
+        // println!("{} {}", torrent.info.files.as_ref().unwrap()[file_i].length as usize, size_progression[file_i] as usize, size_progression[file_i] as usize);
+        bytes_saved += torrent.info.files.as_ref().unwrap()[file_i].length as usize;
+        //addr = 0;
+    }
+    save_piece_to_file(
+        &torrent,
+        &src_path,
+        file_i_r - 1,
+        &data.buf[bytes_saved..(bytes_saved + {
+            let border_r = torrent.info.files.as_ref().unwrap()[file_i_r - 1].length as usize;
+            if (bytes_saved + border_r) > data.buf.len() {
+                data.buf.len() - bytes_saved
+            } else {
+                border_r
+            }
+        })],
+        0,
+    )?;
+    Ok(())
+}
+
+fn read_piece_from_files(
     src_path: &String,
     torrent: &Arc<Torrent>,
     piece_i: u64,
@@ -296,11 +309,7 @@ fn read_files_piece(
 ) -> anyhow::Result<()> {
     let file_i_l = bin_search(addr, &size_progression, 0, size_progression.len());
     let file_i_r = bin_search(
-        addr + if piece_i as usize == (torrent.info.piece_hashes.len() - 1) {
-            torrent.info.length - torrent.info.piece_length * piece_i
-        } else {
-            torrent.info.piece_length
-        },
+        addr + torrent.get_piece_length(piece_i as usize),
         &size_progression,
         0,
         size_progression.len(),
@@ -345,12 +354,8 @@ fn read_files_piece(
         let new_path = path.join(&torrent.info.files.as_ref().unwrap()[file_i_r - 1].path);
         path = &new_path;
         let mut file = File::options().read(true).write(true).open(path)?;
-        let piece_size = if piece_i as usize == (torrent.info.piece_hashes.len() - 1) {
-            torrent.info.length - torrent.info.piece_length * piece_i
-        } else {
-            torrent.info.piece_length
-        };
-        let mut buf = vec![0u8; piece_size as usize - readed_bytes];
+        let piece_length = torrent.get_piece_length(piece_i as usize);
+        let mut buf = vec![0u8; piece_length as usize - readed_bytes];
         if !buf.is_empty() {
             file.read_exact(&mut buf)?;
             piece_buf.extend_from_slice(&buf);
@@ -364,7 +369,7 @@ pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, src_path: &str) -> Ve
     let mut pieces_processed = 0;
     let mut pieces_done = 0;
 
-    if std::path::Path::new(src_path).exists() {
+    if Path::new(src_path).exists() {
         let pieces_i = torrent.info.piece_hashes.len();
         let (sender, mut receiver) = mpsc::channel(200);
         if let Some(ref files) = torrent.info.files {
@@ -377,14 +382,10 @@ pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, src_path: &str) -> Ve
                 arr
             };
             for i in 0..pieces_i {
-                let piece_length = if i == torrent.info.piece_hashes.len() - 1 {
-                    torrent.info.length - i as u64 * torrent.info.piece_length
-                } else {
-                    torrent.info.piece_length
-                };
+                let piece_length = torrent.get_piece_length(i);
                 let mut piece_buf = Vec::new();
                 let addr = i as u64 * torrent.info.piece_length;
-                if let Err(e) = read_files_piece(
+                if let Err(e) = read_piece_from_files(
                     &src_path.to_string(),
                     &torrent,
                     i as u64,
@@ -427,11 +428,7 @@ pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, src_path: &str) -> Ve
             let mut file = File::options().read(true).open(src_path).unwrap();
 
             for i in 0..pieces_i {
-                let piece_length = if i == torrent.info.piece_hashes.len() - 1 {
-                    torrent.info.length - i as u64 * torrent.info.piece_length
-                } else {
-                    torrent.info.piece_length
-                };
+                let piece_length = torrent.get_piece_length(i);
                 let mut piece_buf = vec![0; piece_length as usize];
                 let read_res = file.read_exact(&mut piece_buf);
                 if let Err(e) = read_res {
@@ -483,13 +480,19 @@ pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, src_path: &str) -> Ve
     downloaded_pieces
 }
 
-fn save_piece_to_file(torrent: &Arc<Torrent>, path: &String, file_i: usize, buf: &[u8], addr: u64) {
+fn save_piece_to_file(
+    torrent: &Arc<Torrent>,
+    path: &String,
+    file_i: usize,
+    buf: &[u8],
+    addr: u64,
+) -> anyhow::Result<()> {
     let mut path = Path::new(path);
     let new_path = path.join(&torrent.info.files.as_ref().unwrap()[file_i].path);
     path = &new_path;
     if let Some(root) = path.parent() {
         if !root.exists() {
-            std::fs::create_dir_all(root).unwrap();
+            std::fs::create_dir_all(root)?;
         }
     }
     let mut file = File::options()
@@ -498,8 +501,8 @@ fn save_piece_to_file(torrent: &Arc<Torrent>, path: &String, file_i: usize, buf:
         .create(true)
         .open(path)
         .unwrap();
-    file.seek(std::io::SeekFrom::Start(addr)).unwrap();
-    file.write_all(buf).unwrap();
-    file.set_len(torrent.info.files.as_ref().unwrap()[file_i].length)
-        .unwrap();
+    file.seek(std::io::SeekFrom::Start(addr))?;
+    file.write_all(buf)?;
+    file.set_len(torrent.info.files.as_ref().unwrap()[file_i].length)?;
+    Ok(())
 }
