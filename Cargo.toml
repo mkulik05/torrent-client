@@ -3,6 +3,14 @@ name = "torrent-client"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "torrent_engine"
+path = "src/engine/lib.rs"
+
+[[bin]]
+name = "mybin"
+path = "src/gui/main.rs"
+
 [dependencies]
 anyhow = "1.0.68"
 chrono = "0.4.33"
