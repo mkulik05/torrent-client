@@ -8,6 +8,8 @@ use crate::engine::{
 };
 use eframe::egui::{self, Ui};
 use egui_extras::{Column, TableBuilder};
+use egui::Color32;
+
 use tokio::{
     sync::broadcast::{self, Receiver, Sender},
     task::JoinHandle,
@@ -31,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
 #[derive(Clone, Debug)]
 enum UiMsg {
     // torrent hash as param
-    PieceDone
+    PieceDone,
 }
 
 struct TorrentDownload {
@@ -59,6 +61,46 @@ impl Default for MyApp {
     }
 }
 
+impl MyApp {
+    fn start_download(&mut self, path: &str) {
+        match parse_torrent(path) {
+            Ok(torrent) => {
+                if self
+                    .torrents
+                    .iter()
+                    .position(|x| x.torrent.info_hash == torrent.info_hash)
+                    .is_none()
+                {
+                    let (sender, receiver) = broadcast::channel(100);
+                    let handle = {
+                        let path: String = path.to_string();
+                        let sender = sender.clone();
+                        tokio::spawn(async move {
+                            log!(LogLevel::Info, "Strating torrent downloading: {path}");
+                            download_torrent(path.clone(), "/home/mkul1k/Videos", sender)
+                                .await
+                                .unwrap();
+                            log!(LogLevel::Info, "{} download finished", path);
+                        })
+                    };
+                    self.torrents.push(TorrentDownload {
+                        torrent,
+                        path: path.to_string(),
+                        handle,
+                        sender,
+                        receiver,
+                        pieces_done: 0,
+                    });
+                } else {
+                }
+            }
+            Err(e) => {
+                log!(LogLevel::Error, "Error on torrent file {path} open: {}", e);
+            }
+        }
+    }
+}
+
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         for (i, torrent) in self.torrents.iter_mut().enumerate() {
@@ -69,7 +111,6 @@ impl eframe::App for MyApp {
                     }
                 }
             }
-            
         }
         egui::TopBottomPanel::top("top_panel")
             .exact_height(50.0)
@@ -81,53 +122,7 @@ impl eframe::App for MyApp {
                                 .add_filter("Torrent file", &["torrent"])
                                 .pick_file();
                             if let Some(path) = file {
-                                let path = path.to_str().unwrap();
-                                match parse_torrent(path) {
-                                    Ok(torrent) => {
-                                        if self
-                                            .torrents
-                                            .iter()
-                                            .position(|x| x.torrent.info_hash == torrent.info_hash)
-                                            .is_none()
-                                        {
-                                            let (sender, receiver) = broadcast::channel(100);
-                                            let handle = {
-                                                let path: String = path.to_string();
-                                                let sender = sender.clone();
-                                                tokio::spawn(async move {
-                                                    download_torrent(
-                                                        path.clone(),
-                                                        "/home/mkul1k/Videos",
-                                                        sender,
-                                                    )
-                                                    .await
-                                                    .unwrap();
-                                                    log!(
-                                                        LogLevel::Info,
-                                                        "{} download finished",
-                                                        path
-                                                    );
-                                                })
-                                            };
-                                            self.torrents.push(TorrentDownload {
-                                                torrent,
-                                                path: path.to_string(),
-                                                handle,
-                                                sender,
-                                                receiver,
-                                                pieces_done: 0,
-                                            });
-                                        } else {
-                                        }
-                                    }
-                                    Err(e) => {
-                                        log!(
-                                            LogLevel::Error,
-                                            "Error on torrent file {path} open: {}",
-                                            e
-                                        );
-                                    }
-                                }
+                                self.start_download(path.to_str().unwrap());
                             }
                         }
                     });
@@ -166,9 +161,9 @@ impl MyApp {
             .striped(true)
             .resizable(true)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::initial(100.0).range(40.0..=300.0).clip(true))
+            .column(Column::initial(100.0).clip(true))
             .column(Column::auto())
-            .column(Column::initial(100.0).range(40.0..=300.0))
+            .column(Column::auto())
             .column(Column::initial(100.0).at_least(40.0).clip(true))
             .column(Column::remainder())
             .min_scrolled_height(0.0);
@@ -180,10 +175,10 @@ impl MyApp {
                     ui.strong("Name");
                 });
                 header.col(|ui| {
-                    ui.strong("Done");
+                    ui.strong("Size");
                 });
                 header.col(|ui| {
-                    ui.strong("Expanding content");
+                    ui.strong("Progress");
                 });
                 header.col(|ui| {
                     ui.strong("Clipped text");
@@ -201,19 +196,39 @@ impl MyApp {
                         }
 
                         row.col(|ui| {
-                            ui.label(&self.torrents[row_index].path);
+                            ui.label(&self.torrents[row_index].torrent.info.name);
+                        });
+                        row.col(|ui| {
+                            let postfixed_size = {
+                                let size = self.torrents[row_index].torrent.info.length;
+                                match size {
+                                    0..=999 => format!("{size}B"),
+                                    1000..=999_999 => format!("{:.2}B", size / 1000),
+                                    1000_000..=999_999_999 => format!("{:.2}MB", size / 1000_000),
+                                    _ => {
+                                        format!("{:.2}GB", size / 1000_000_000)
+                                    }
+                                }
+                            };
+                            ui.label(postfixed_size);
+                        });
+                        row.col(|ui| {
+                            let progress_bar = if self.torrents[row_index].pieces_done == self.torrents[row_index].torrent.info.piece_hashes.len() as u32 {
+                                egui::ProgressBar::new(1.0).fill(Color32::GREEN)
+                            } else {
+                                let progress = self.torrents[row_index].pieces_done as f32
+                                / self.torrents[row_index].torrent.info.piece_hashes.len() as f32;
+                                egui::ProgressBar::new(progress).text(format!("{:.2}%", progress * 100.0))
+                            };
+                            ui.add(progress_bar);
                         });
                         row.col(|ui| {
                             ui.label(format!(
-                                "{}",
-                                self.torrents[row_index].pieces_done
+                                "{:.3}",
+                                self.torrents[row_index].pieces_done as f32
+                                    / self.torrents[row_index].torrent.info.piece_hashes.len()
+                                        as f32
                             ));
-                        });
-                        row.col(|ui| {
-                            ui.label(self.torrents[row_index].torrent.info.piece_hashes.len().to_string());
-                        });
-                        row.col(|ui| {
-                            ui.label(row_index.to_string());
                         });
                         row.col(|ui| {
                             ui.label(row_index.to_string());

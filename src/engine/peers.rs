@@ -8,6 +8,7 @@ use tokio::time::timeout;
 use super::download::DataPiece;
 use super::logger::{LogLevel, log};
 use super::torrent::Torrent;
+use async_recursion::async_recursion;
 
 const MAX_INTERESTED_ATTEMPTS: u8 = 3;
 
@@ -86,9 +87,12 @@ impl Peer {
             Ok(res) => res?,
             Err(_) => anyhow::bail!("Connection timeout"),
         };
-        self.peer_id = Some(self.handshake(torrent, Duration::from_secs(4)).await?);
+        self.status = PeerStatus::NotConnected;
+        self.connect(torrent).await?;
         Ok(())
     }
+
+    #[async_recursion]
     pub async fn connect(&mut self, torrent: &Torrent) -> anyhow::Result<()> {
         match self.status {
             PeerStatus::Unchoked => Ok(()),

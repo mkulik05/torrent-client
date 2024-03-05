@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use rand::distributions::{Alphanumeric, DistString};
 use tokio::sync::mpsc::Sender;
+use tokio::task::JoinHandle;
 
 use super::bencode::BencodeValue;
 use super::download::DataPiece;
@@ -98,7 +99,7 @@ impl TrackerResp {
         self: Arc<Self>,
         send_data: Sender<DataPiece>,
         send_status: Sender<DownloadEvents>,
-    ) {
+    ) -> JoinHandle<()> {
         tokio::spawn(async move {
             let mut n = 0;
             for peer in self.peers.iter() {
@@ -111,6 +112,6 @@ impl TrackerResp {
                 }
             }
             log!(LogLevel::Info, "Connected to {} peer(s)", n);
-        });
+        })
     }
 }

@@ -5,7 +5,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-
 use tokio::sync::broadcast::Sender;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
@@ -59,11 +58,12 @@ pub async fn download_torrent(
     let mut peers = Vec::new();
 
     // tokio task spawns inside
-    tracker_resp
+    let peer_discovery_handle = tracker_resp
         .clone()
         .find_working_peers(send_data.clone(), send_status.clone());
 
-    let pieces_done = saver::find_downloaded_pieces(torrent.clone(), file_path).await;
+    let pieces_done =
+        saver::find_downloaded_pieces(torrent.clone(), file_path, ui_sender.clone()).await;
 
     let saver_task = saver::spawn_saver(
         file_path.to_string(),
@@ -71,7 +71,7 @@ pub async fn download_torrent(
         get_data,
         send_status.clone(),
         pieces_done.len(),
-        ui_sender.clone()
+        ui_sender.clone(),
     );
     let mut pieces_tasks = download::tasks::get_piece_tasks(torrent.clone(), pieces_done);
     let mut chunks_tasks = VecDeque::new();
@@ -189,44 +189,6 @@ pub async fn download_torrent(
                         .send(DownloadEvents::ChunksFail(task))
                         .await
                         .unwrap();
-
-                    //  TO FIX
-                    let mut attempt_n = 0;
-                    let mut delay = 1;
-                    let mut peer =
-                        Peer::new(&addr, send_data.clone(), Duration::from_secs(delay)).await;
-                    while attempt_n < 3 {
-                        if let Err(e) = peer {
-                            if e.to_string() == "Connection timeout" {
-                                attempt_n += 1;
-                                delay += 1;
-                                peer =
-                                    Peer::new(&addr, send_data.clone(), Duration::from_secs(delay))
-                                        .await;
-                            } else {
-                                log!(
-                                    LogLevel::Fatal,
-                                    "Can't connect to peer, it's lost... {}",
-                                    addr
-                                );
-                                return;
-                            }
-                        } else {
-                            break;
-                        }
-                    }
-                    if peer.is_ok() {
-                        send_status2
-                            .send(DownloadEvents::PeerAdd(peer.unwrap()))
-                            .await
-                            .unwrap();
-                    } else {
-                        log!(
-                            LogLevel::Fatal,
-                            "Failed to connect to peer after several attemplts, it's lost... {}",
-                            addr
-                        );
-                    }
                 };
             });
         } else {
@@ -234,5 +196,6 @@ pub async fn download_torrent(
             break;
         }
     }
+    peer_discovery_handle.abort();
     Ok(())
 }

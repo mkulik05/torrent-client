@@ -181,7 +181,6 @@ pub fn spawn_saver(
             }
             let chunks_bitmap = pieces_chunks.get_mut(&data.piece_i).unwrap();
             chunks_bitmap.add_chunk(data.begin as usize);
-            log!(LogLevel::Debug, "{} {:?}", data.piece_i, chunks_bitmap);
             if chunks_bitmap.is_piece_ready() {
                 let addr = data.piece_i * torrent.info.piece_length;
                 let piece_length = torrent.get_piece_length(data.piece_i as usize);
@@ -369,7 +368,7 @@ fn read_piece_from_files(
     Ok(())
 }
 
-pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, src_path: &str) -> Vec<usize> {
+pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, src_path: &str, ui_sender: Sender<UiMsg>) -> Vec<usize> {
     let mut downloaded_pieces = Vec::new();
     let mut pieces_processed = 0;
     let mut pieces_done = 0;
@@ -409,11 +408,13 @@ pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, src_path: &str) -> Ve
                     );
                 } else {
                     let sender = sender.clone();
+                    let ui_sender = ui_sender.clone();
                     let torrent = torrent.clone();
                     tokio::task::spawn_blocking(move || {
                         let hash = Torrent::bytes_hash(&piece_buf);
                         if hash == torrent.info.piece_hashes[i] {
                             sender.try_send((i, true)).unwrap();
+                            ui_sender.send(UiMsg::PieceDone).unwrap();
                             log!(LogLevel::Info, "Piece {} is already downloaded", i);
                         } else {
                             sender.try_send((i, false)).unwrap();
@@ -453,11 +454,13 @@ pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, src_path: &str) -> Ve
                 }
                 {
                     let sender = sender.clone();
+                    let ui_sender = ui_sender.clone();
                     let torrent = torrent.clone();
                     tokio::task::spawn_blocking(move || {
                         let hash = Torrent::bytes_hash(&piece_buf);
                         if hash == torrent.info.piece_hashes[i] {
                             sender.try_send((i, true)).unwrap();
+                            ui_sender.send(UiMsg::PieceDone).unwrap();
                             log!(LogLevel::Info, "Piece {} is already downloaded", i);
                         } else {
                             sender.try_send((i, false)).unwrap();
@@ -468,7 +471,6 @@ pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, src_path: &str) -> Ve
         }
 
         while pieces_done < pieces_processed {
-            println!("{} {}", pieces_done, pieces_processed);
             if let Ok(Some((i, have))) =
                 timeout(std::time::Duration::from_secs(10), receiver.recv()).await
             {

@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.68"
+async-recursion = "1.0.5"
 chrono = "0.4.33"
 console-subscriber = "0.2.0"
 eframe = "0.26.2"

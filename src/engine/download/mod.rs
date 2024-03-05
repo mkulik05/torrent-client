@@ -48,6 +48,7 @@ impl DownloadReq {
                                 .await?;
                             log!(LogLevel::Debug, "Reconnected to peer");
                         } else {
+                            
                             error_sender
                                 .send(DownloadEvents::PeerAdd(self.peer))
                                 .await?;
@@ -55,10 +56,24 @@ impl DownloadReq {
                         }
                     }
                     None => {
-                        error_sender
-                            .send(DownloadEvents::PeerAdd(self.peer))
-                            .await?;
-                        anyhow::bail!("Peer error: {}", e);
+                        log!(LogLevel::Error, "{e}");
+                        match e.downcast_ref::<tokio::time::error::Elapsed>() {
+                            Some(_) => {
+                                log!(LogLevel::Debug, "Delay eror");
+                                anyhow::bail!("Peer: {} is removed", self.peer.peer_addr);
+                            },
+                            None => {
+                                if e.to_string() != "Failed to unchoke peer" {
+                                    error_sender
+                                    .send(DownloadEvents::PeerAdd(self.peer))
+                                    .await?;
+                                    anyhow::bail!("Unknown peer error: {}", e);
+                                } else {
+                                    anyhow::bail!("Peer: {} is removed", self.peer.peer_addr);
+                                }
+                            }
+                        };
+                        
                     }
                 }
             };
