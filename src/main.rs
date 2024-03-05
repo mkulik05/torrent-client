@@ -7,8 +7,8 @@ use crate::engine::{
     torrent::Torrent,
 };
 use eframe::egui::{self, Ui};
-use egui_extras::{Column, TableBuilder};
 use egui::Color32;
+use egui_extras::{Column, TableBuilder};
 
 use tokio::{
     sync::broadcast::{self, Receiver, Sender},
@@ -26,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
         viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 750.0]),
         ..Default::default()
     };
-    eframe::run_native("Encryptor", options, Box::new(|_| Box::<MyApp>::default()));
+    eframe::run_native("Encryptor", options, Box::new(|_| Box::<MyApp>::default())).unwrap();
     Ok(())
 }
 
@@ -49,6 +49,7 @@ struct MyApp {
     torrents: Vec<TorrentDownload>,
     context_selected_row: Option<usize>,
     selected_row: Option<usize>,
+    user_msg: Option<(String, String)>,
 }
 
 impl Default for MyApp {
@@ -57,12 +58,13 @@ impl Default for MyApp {
             torrents: Vec::new(),
             context_selected_row: None,
             selected_row: None,
+            user_msg: None,
         }
     }
 }
 
 impl MyApp {
-    fn start_download(&mut self, path: &str) {
+    fn start_download(&mut self, path: &str, ctx: &egui::Context) {
         match parse_torrent(path) {
             Ok(torrent) => {
                 if self
@@ -92,6 +94,11 @@ impl MyApp {
                         pieces_done: 0,
                     });
                 } else {
+                    self.user_msg = Some((
+                        "Alert".to_string(),
+                        "This torrent is already imported".to_string(),
+                    ));
+                    ctx.request_repaint();
                 }
             }
             Err(e) => {
@@ -100,6 +107,7 @@ impl MyApp {
         }
     }
 }
+
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -112,17 +120,21 @@ impl eframe::App for MyApp {
                 }
             }
         }
+
+        self.show_message(ctx);
+
         egui::TopBottomPanel::top("top_panel")
             .exact_height(50.0)
             .show(ctx, |ui| {
                 egui::menu::bar(ui, |ui| {
                     ui.menu_button("File", |ui| {
                         if ui.button("Open").clicked() {
+                            ui.close_menu();
                             let file = rfd::FileDialog::new()
                                 .add_filter("Torrent file", &["torrent"])
                                 .pick_file();
                             if let Some(path) = file {
-                                self.start_download(path.to_str().unwrap());
+                                self.start_download(path.to_str().unwrap(), ctx);
                             }
                         }
                     });
@@ -156,6 +168,23 @@ impl eframe::App for MyApp {
 }
 
 impl MyApp {
+    fn show_message(&mut self, ctx: &egui::Context) {
+        let Some((header, msg)) = self.user_msg.clone() else {
+            return;
+        };
+        egui::Window::new(header)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.vertical(|ui| {
+                    ui.label(msg);
+                    ui.spacing();
+                    if ui.button("Okay").clicked() {
+                        self.user_msg = None;
+                    }
+                });
+            });
+    }
     fn draw_table(&mut self, ui: &mut Ui) {
         let mut table = TableBuilder::new(ui)
             .striped(true)
@@ -213,12 +242,16 @@ impl MyApp {
                             ui.label(postfixed_size);
                         });
                         row.col(|ui| {
-                            let progress_bar = if self.torrents[row_index].pieces_done == self.torrents[row_index].torrent.info.piece_hashes.len() as u32 {
+                            let progress_bar = if self.torrents[row_index].pieces_done
+                                == self.torrents[row_index].torrent.info.piece_hashes.len() as u32
+                            {
                                 egui::ProgressBar::new(1.0).fill(Color32::GREEN)
                             } else {
                                 let progress = self.torrents[row_index].pieces_done as f32
-                                / self.torrents[row_index].torrent.info.piece_hashes.len() as f32;
-                                egui::ProgressBar::new(progress).text(format!("{:.2}%", progress * 100.0))
+                                    / self.torrents[row_index].torrent.info.piece_hashes.len()
+                                        as f32;
+                                egui::ProgressBar::new(progress)
+                                    .text(format!("{:.2}%", progress * 100.0))
                             };
                             ui.add(progress_bar);
                         });
