@@ -1,4 +1,4 @@
-use crate::UiMsg;
+use crate::{UiHandle, UiMsg};
 
 use std::collections::VecDeque;
 use std::path::Path;
@@ -41,7 +41,7 @@ pub fn parse_torrent(torrent_path: &str) -> anyhow::Result<Torrent> {
 pub async fn download_torrent(
     torrent_path: String,
     path: &str,
-    ui_sender: Sender<UiMsg>,
+    ui_handle: UiHandle,
 ) -> anyhow::Result<()> {
     let torrent = Torrent::new(torrent_path.as_str())?;
     let file_path = if Path::new(path).is_dir() {
@@ -63,7 +63,7 @@ pub async fn download_torrent(
         .find_working_peers(send_data.clone(), send_status.clone());
 
     let pieces_done =
-        saver::find_downloaded_pieces(torrent.clone(), file_path, ui_sender.clone()).await;
+        saver::find_downloaded_pieces(torrent.clone(), file_path, ui_handle.clone()).await;
 
     let saver_task = saver::spawn_saver(
         file_path.to_string(),
@@ -71,7 +71,7 @@ pub async fn download_torrent(
         get_data,
         send_status.clone(),
         pieces_done.len(),
-        ui_sender.clone(),
+        ui_handle.clone(),
     );
     let mut pieces_tasks = download::tasks::get_piece_tasks(torrent.clone(), pieces_done);
     let mut chunks_tasks = VecDeque::new();

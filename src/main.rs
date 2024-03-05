@@ -15,6 +15,20 @@ use tokio::{
     task::JoinHandle,
 };
 
+#[derive(Clone, Debug)]
+struct UiHandle {
+    ui_sender: Sender<UiMsg>,
+    ctx: egui::Context
+}
+
+impl UiHandle {
+    fn send_with_update(&self, msg: UiMsg) -> anyhow::Result<()> {
+        self.ui_sender.send(msg)?;
+        self.ctx.request_repaint();
+        Ok(())
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     logger::Logger::init(format!(
@@ -77,9 +91,13 @@ impl MyApp {
                     let handle = {
                         let path: String = path.to_string();
                         let sender = sender.clone();
+                        let ctx = ctx.clone();
                         tokio::spawn(async move {
                             log!(LogLevel::Info, "Strating torrent downloading: {path}");
-                            download_torrent(path.clone(), "/home/mkul1k/Videos", sender)
+                            download_torrent(path.clone(), "/home/mkul1k/Videos", UiHandle {
+                                ui_sender: sender,
+                                ctx
+                            })
                                 .await
                                 .unwrap();
                             log!(LogLevel::Info, "{} download finished", path);
@@ -218,7 +236,7 @@ impl MyApp {
             })
             .body(|body| {
                 {
-                    body.heterogeneous_rows((0..self.torrents.len()).map(|_| 18.0), |mut row| {
+                    body.heterogeneous_rows((0..self.torrents.len()).map(|_| 16.0), |mut row| {
                         let row_index = row.index();
                         if let Some(n) = self.selected_row {
                             row.set_selected(n == row_index);

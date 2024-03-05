@@ -13,7 +13,7 @@ use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
-use crate::UiMsg;
+use crate::{UiMsg, UiHandle};
 
 use super::download::DataPiece;
 use super::logger::{LogLevel, log};
@@ -95,7 +95,7 @@ pub fn spawn_saver(
     mut get_data: Receiver<DataPiece>,
     send_status: mpsc::Sender<DownloadEvents>,
     pieces_done: usize,
-    sender: Sender<UiMsg>
+    ui_handle: UiHandle
 ) -> JoinHandle<anyhow::Result<()>> {
     // variable containing increasing array starting from 0;
     // each element arr[i] equals arr[i - 1] + file_sizes[i]
@@ -217,7 +217,7 @@ pub fn spawn_saver(
                         .unwrap();
                     *chunks_bitmap = PieceChunksBitmap::new(&torrent, data.piece_i as usize);
                 } else {
-                    sender.send(UiMsg::PieceDone).unwrap();
+                    ui_handle.send_with_update(UiMsg::PieceDone).unwrap();
                     log!(
                         LogLevel::Info,
                         "Piece {} hash matched, downloaded: {}",
@@ -368,7 +368,7 @@ fn read_piece_from_files(
     Ok(())
 }
 
-pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, src_path: &str, ui_sender: Sender<UiMsg>) -> Vec<usize> {
+pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, src_path: &str, ui_handle: UiHandle) -> Vec<usize> {
     let mut downloaded_pieces = Vec::new();
     let mut pieces_processed = 0;
     let mut pieces_done = 0;
@@ -408,13 +408,13 @@ pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, src_path: &str, ui_se
                     );
                 } else {
                     let sender = sender.clone();
-                    let ui_sender = ui_sender.clone();
+                    let ui_handle = ui_handle.clone();
                     let torrent = torrent.clone();
                     tokio::task::spawn_blocking(move || {
                         let hash = Torrent::bytes_hash(&piece_buf);
                         if hash == torrent.info.piece_hashes[i] {
                             sender.try_send((i, true)).unwrap();
-                            ui_sender.send(UiMsg::PieceDone).unwrap();
+                            ui_handle.send_with_update(UiMsg::PieceDone).unwrap();
                             log!(LogLevel::Info, "Piece {} is already downloaded", i);
                         } else {
                             sender.try_send((i, false)).unwrap();
@@ -454,13 +454,13 @@ pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, src_path: &str, ui_se
                 }
                 {
                     let sender = sender.clone();
-                    let ui_sender = ui_sender.clone();
+                    let ui_handle = ui_handle.clone();
                     let torrent = torrent.clone();
                     tokio::task::spawn_blocking(move || {
                         let hash = Torrent::bytes_hash(&piece_buf);
                         if hash == torrent.info.piece_hashes[i] {
                             sender.try_send((i, true)).unwrap();
-                            ui_sender.send(UiMsg::PieceDone).unwrap();
+                            ui_handle.send_with_update(UiMsg::PieceDone).unwrap();
                             log!(LogLevel::Info, "Piece {} is already downloaded", i);
                         } else {
                             sender.try_send((i, false)).unwrap();
