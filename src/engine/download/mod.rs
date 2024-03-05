@@ -6,10 +6,10 @@ use std::time::Duration;
 
 use tokio::sync::mpsc::Sender;
 
-use crate::logger::{log, LogLevel};
-use crate::peers::{Peer, PeerMessage, PeerStatus};
-use crate::torrent::Torrent;
-use crate::DownloadEvents;
+use crate::logger::{LogLevel, log};
+use super::peers::{Peer, PeerMessage, PeerStatus};
+use super::torrent::Torrent;
+use super::DownloadEvents;
 use tasks::ChunksTask;
 
 #[derive(Debug)]
@@ -69,19 +69,19 @@ impl DownloadReq {
             self.task.piece_i,
             self.task.chunks
         );
-        let mut begin = crate::CHUNK_SIZE * self.task.chunks.start;
+        let mut begin = super::CHUNK_SIZE * self.task.chunks.start;
         for i in self.task.chunks.clone() {
             let length = if i + 1 == self.task.chunks.end && self.task.includes_last_chunk {
                 if self.task.piece_i as usize == self.torrent.info.piece_hashes.len() - 1 {
                     self.torrent.info.length
                         - (self.torrent.info.piece_hashes.len() - 1) as u64
                             * self.torrent.info.piece_length
-                        - i * crate::CHUNK_SIZE
+                        - i * super::CHUNK_SIZE
                 } else {
-                    self.torrent.info.piece_length - i * crate::CHUNK_SIZE
+                    self.torrent.info.piece_length - i * super::CHUNK_SIZE
                 }
             } else {
-                crate::CHUNK_SIZE
+                super::CHUNK_SIZE
             };
             let mut buf = Vec::new();
             buf.extend_from_slice(&(self.task.piece_i as u32).to_be_bytes());
@@ -120,7 +120,7 @@ impl DownloadReq {
                     .await?;
                 return Ok(());
             }
-            begin += crate::CHUNK_SIZE;
+            begin += super::CHUNK_SIZE;
             // tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
         }
         log!(LogLevel::Debug, "Sended all requests");

@@ -17,6 +17,7 @@ macro_rules! log {
     }
     };
 }
+
 pub(crate) use log;
 
 #[derive(Debug)]
@@ -41,9 +42,7 @@ impl Logger {
     pub fn init(path: String) -> Result<(), anyhow::Error> {
         println!("{}", path);
         LOGGER_INSTANCE
-            .set(Logger {
-                log_path: path,
-            })
+            .set(Logger { log_path: path })
             .expect("Failed to initialise logger");
 
         Ok(())
@@ -58,7 +57,16 @@ impl Logger {
             .expect("cannot open log file");
 
         log_file
-            .write_all(format!("{} {:5} {:?} - {}\n", timestamp, log_level, tokio::task::try_id(), msg).as_bytes())
+            .write_all(
+                format!(
+                    "{} {:5} {:?} - {}\n",
+                    timestamp,
+                    log_level,
+                    tokio::task::try_id(),
+                    msg
+                )
+                .as_bytes(),
+            )
             .expect("write to log file failed");
         if let LogLevel::Info = log_level {
             println!("{msg}");

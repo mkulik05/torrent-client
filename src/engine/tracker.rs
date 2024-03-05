@@ -5,12 +5,12 @@ use std::time::Duration;
 use rand::distributions::{Alphanumeric, DistString};
 use tokio::sync::mpsc::Sender;
 
-use crate::bencode::BencodeValue;
-use crate::download::DataPiece;
-use crate::logger::{log, LogLevel};
-use crate::peers::Peer;
-use crate::torrent::Torrent;
-use crate::DownloadEvents;
+use super::bencode::BencodeValue;
+use super::download::DataPiece;
+use super::logger::{LogLevel, log};
+use super::peers::Peer;
+use super::torrent::Torrent;
+use super::DownloadEvents;
 
 pub struct TrackerReq {
     pub info_hash: String,

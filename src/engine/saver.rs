@@ -7,15 +7,17 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
+use tokio::sync::broadcast::Sender;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
-use crate::download::DataPiece;
-use crate::logger::{log, LogLevel};
-use crate::{DownloadEvents, Torrent};
+use crate::UiMsg;
+
+use super::download::DataPiece;
+use super::logger::{LogLevel, log};
+use super::{DownloadEvents, Torrent};
 
 #[derive(Debug)]
 struct PieceChunksBitmap {
@@ -26,7 +28,7 @@ struct PieceChunksBitmap {
 impl PieceChunksBitmap {
     fn new(torrent: &Torrent, piece_i: usize) -> Self {
         let piece_length = torrent.get_piece_length(piece_i);
-        let chunks_n = (piece_length as f64 / crate::CHUNK_SIZE as f64).ceil() as i32;
+        let chunks_n = (piece_length as f64 / super::CHUNK_SIZE as f64).ceil() as i32;
         let mut last_chunk_mask = 0;
         let mut mask = 128;
         if chunks_n % 8 == 0 {
@@ -42,14 +44,14 @@ impl PieceChunksBitmap {
         }
     }
     fn add_chunk(&mut self, begin: usize) {
-        let chunk_i = begin / crate::download::tasks::CHUNK_SIZE as usize;
+        let chunk_i = begin / super::CHUNK_SIZE as usize;
         let bitmap_cell_i = chunk_i / 8;
         let mut mask = 128;
         mask >>= chunk_i % 8;
         self.bitmap[bitmap_cell_i] |= mask;
     }
     fn chunk_exist(&self, begin: usize) -> bool {
-        let chunk_i = begin / crate::download::tasks::CHUNK_SIZE as usize;
+        let chunk_i = begin / super::CHUNK_SIZE as usize;
         let bitmap_cell_i = chunk_i / 8;
         let mut mask = 128;
         mask >>= chunk_i % 8;
@@ -91,8 +93,9 @@ pub fn spawn_saver(
     src_path: String,
     torrent: Arc<Torrent>,
     mut get_data: Receiver<DataPiece>,
-    send_status: Sender<DownloadEvents>,
+    send_status: mpsc::Sender<DownloadEvents>,
     pieces_done: usize,
+    sender: Sender<UiMsg>
 ) -> JoinHandle<anyhow::Result<()>> {
     // variable containing increasing array starting from 0;
     // each element arr[i] equals arr[i - 1] + file_sizes[i]
@@ -178,6 +181,7 @@ pub fn spawn_saver(
             }
             let chunks_bitmap = pieces_chunks.get_mut(&data.piece_i).unwrap();
             chunks_bitmap.add_chunk(data.begin as usize);
+            log!(LogLevel::Debug, "{} {:?}", data.piece_i, chunks_bitmap);
             if chunks_bitmap.is_piece_ready() {
                 let addr = data.piece_i * torrent.info.piece_length;
                 let piece_length = torrent.get_piece_length(data.piece_i as usize);
@@ -214,6 +218,7 @@ pub fn spawn_saver(
                         .unwrap();
                     *chunks_bitmap = PieceChunksBitmap::new(&torrent, data.piece_i as usize);
                 } else {
+                    sender.send(UiMsg::PieceDone).unwrap();
                     log!(
                         LogLevel::Info,
                         "Piece {} hash matched, downloaded: {}",

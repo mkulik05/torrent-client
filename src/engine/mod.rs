@@ -1,8 +1,12 @@
+use crate::UiMsg;
+
 use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+
+use tokio::sync::broadcast::Sender;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
@@ -12,16 +16,16 @@ use peers::Peer;
 use torrent::Torrent;
 use tracker::TrackerReq;
 
-use crate::download::tasks::CHUNK_SIZE;
-use crate::download::DataPiece;
+use self::download::tasks::CHUNK_SIZE;
+use self::download::DataPiece;
 use crate::logger::{log, LogLevel};
 
-pub mod logger;
 mod bencode;
 mod download;
+pub mod logger;
 mod peers;
 mod saver;
-mod torrent;
+pub mod torrent;
 mod tracker;
 
 enum DownloadEvents {
@@ -31,8 +35,16 @@ enum DownloadEvents {
     PeerAdd(Peer),
 }
 
-pub async fn download_torrent(torrent_path: &str, path: &str) -> anyhow::Result<()> {
-    let torrent = Torrent::new(torrent_path)?;
+pub fn parse_torrent(torrent_path: &str) -> anyhow::Result<Torrent> {
+    Ok(Torrent::new(torrent_path)?)
+}
+
+pub async fn download_torrent(
+    torrent_path: String,
+    path: &str,
+    ui_sender: Sender<UiMsg>,
+) -> anyhow::Result<()> {
+    let torrent = Torrent::new(torrent_path.as_str())?;
     let file_path = if Path::new(path).is_dir() {
         Path::new(path).join(&torrent.info.name)
     } else {
@@ -59,15 +71,12 @@ pub async fn download_torrent(torrent_path: &str, path: &str) -> anyhow::Result<
         get_data,
         send_status.clone(),
         pieces_done.len(),
+        ui_sender.clone()
     );
     let mut pieces_tasks = download::tasks::get_piece_tasks(torrent.clone(), pieces_done);
     let mut chunks_tasks = VecDeque::new();
 
-    download::tasks::add_chunks_tasks(
-        &mut pieces_tasks,
-        &mut chunks_tasks,
-        MAX_CHUNKS_TASKS - 1,
-    );
+    download::tasks::add_chunks_tasks(&mut pieces_tasks, &mut chunks_tasks, MAX_CHUNKS_TASKS - 1);
 
     let mut no_free_peers = false;
     loop {
@@ -104,15 +113,12 @@ pub async fn download_torrent(torrent_path: &str, path: &str) -> anyhow::Result<
             match download_status {
                 DownloadEvents::Finished => break,
                 DownloadEvents::InvalidHash(piece_i) => {
-                    let total_chunks = (torrent.info.piece_length as f64
-                        / CHUNK_SIZE as f64)
-                        .ceil() as u64;
+                    let total_chunks =
+                        (torrent.info.piece_length as f64 / CHUNK_SIZE as f64).ceil() as u64;
                     pieces_tasks.push_front(PieceTask {
                         piece_i,
                         chunks_done: 0,
-                        total_chunks: if piece_i as usize
-                            == (torrent.info.piece_hashes.len() - 1)
-                        {
+                        total_chunks: if piece_i as usize == (torrent.info.piece_hashes.len() - 1) {
                             ((torrent.info.length
                                 - (torrent.info.piece_hashes.len() - 1) as u64
                                     * torrent.info.piece_length)
@@ -188,19 +194,15 @@ pub async fn download_torrent(torrent_path: &str, path: &str) -> anyhow::Result<
                     let mut attempt_n = 0;
                     let mut delay = 1;
                     let mut peer =
-                        Peer::new(&addr, send_data.clone(), Duration::from_secs(delay))
-                            .await;
+                        Peer::new(&addr, send_data.clone(), Duration::from_secs(delay)).await;
                     while attempt_n < 3 {
                         if let Err(e) = peer {
                             if e.to_string() == "Connection timeout" {
                                 attempt_n += 1;
                                 delay += 1;
-                                peer = Peer::new(
-                                    &addr,
-                                    send_data.clone(),
-                                    Duration::from_secs(delay),
-                                )
-                                .await;
+                                peer =
+                                    Peer::new(&addr, send_data.clone(), Duration::from_secs(delay))
+                                        .await;
                             } else {
                                 log!(
                                     LogLevel::Fatal,
@@ -219,7 +221,11 @@ pub async fn download_torrent(torrent_path: &str, path: &str) -> anyhow::Result<
                             .await
                             .unwrap();
                     } else {
-                        log!(LogLevel::Fatal, "Failed to connect to peer after several attemplts, it's lost... {}", addr);
+                        log!(
+                            LogLevel::Fatal,
+                            "Failed to connect to peer after several attemplts, it's lost... {}",
+                            addr
+                        );
                     }
                 };
             });

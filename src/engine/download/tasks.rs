@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::torrent::Torrent;
+use super::super::torrent::Torrent;
 
 const CHUNKS_PER_TASK: u64 = 60;
 pub const MAX_CHUNKS_TASKS: usize = 100;

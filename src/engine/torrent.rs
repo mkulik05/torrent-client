@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use sha1::{Digest, Sha1};
 
-use crate::bencode::BencodeValue;
-use crate::logger::{log, LogLevel};
+use super::bencode::BencodeValue;
+use super::logger::{LogLevel, log};
 
 #[derive(Debug)]
 pub struct TorrentFile {

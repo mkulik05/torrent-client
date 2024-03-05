@@ -5,9 +5,9 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc::Sender;
 use tokio::time::timeout;
 
-use crate::download::DataPiece;
-use crate::logger::{log, LogLevel};
-use crate::torrent::Torrent;
+use super::download::DataPiece;
+use super::logger::{LogLevel, log};
+use super::torrent::Torrent;
 
 const MAX_INTERESTED_ATTEMPTS: u8 = 3;
 

@@ -3,22 +3,18 @@ name = "torrent-client"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
-name = "torrent_engine"
-path = "src/engine/lib.rs"
-
-[[bin]]
-name = "mybin"
-path = "src/gui/main.rs"
-
 [dependencies]
 anyhow = "1.0.68"
 chrono = "0.4.33"
 console-subscriber = "0.2.0"
+eframe = "0.26.2"
+egui = { version = "0.26.2", features = ["default"] }
+egui_extras = { version = "0.26.2", features = ["default"] }
 hex = "0.4.3"
 once_cell = "1.19.0"
 rand = "0.8.5"
 reqwest = { version = "0.11.18", features = ["json", "blocking"] }
+rfd = "0.14.0"
 serde = { version = "1.0.136", features = ["derive"] }
 serde_json = "1.0.105"                                           
 serde_urlencoded = "0.7.1"                  
