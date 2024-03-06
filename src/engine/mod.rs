@@ -60,6 +60,15 @@ pub async fn download_torrent(
     ui_handle: UiHandle,
 ) -> anyhow::Result<()> {
     let torrent = Torrent::new(torrent_path.as_str())?;
+
+    if torrent.info.piece_hashes.len() > u16::MAX as usize {
+        anyhow::bail!("Too many pieces");   
+    }
+
+    if torrent.info.piece_length / CHUNK_SIZE > u16::MAX as u64 {
+        anyhow::bail!("Too many pieces");
+    }
+
     let file_path = if Path::new(path).is_dir() {
         Path::new(path).join(&torrent.info.name)
     } else {
@@ -172,7 +181,7 @@ pub async fn download_torrent(
                     let total_chunks =
                         (torrent.info.piece_length as f64 / CHUNK_SIZE as f64).ceil() as u64;
                     pieces_tasks.push_front(PieceTask {
-                        piece_i,
+                        piece_i: piece_i as u16,
                         chunks_done: 0,
                         total_chunks: if piece_i as usize == (torrent.info.piece_hashes.len() - 1) {
                             ((torrent.info.length
@@ -183,7 +192,7 @@ pub async fn download_torrent(
                                 .ceil() as u64
                         } else {
                             total_chunks
-                        },
+                        } as u16,
                     })
                 }
                 DownloadEvents::ChunksFail(chunk) => {

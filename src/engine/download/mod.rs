@@ -84,16 +84,16 @@ impl DownloadReq {
             self.task.piece_i,
             self.task.chunks
         );
-        let mut begin = super::CHUNK_SIZE * self.task.chunks.start;
+        let mut begin = super::CHUNK_SIZE * self.task.chunks.start as u64;
         for i in self.task.chunks.clone() {
             let length = if i + 1 == self.task.chunks.end && self.task.includes_last_chunk {
                 if self.task.piece_i as usize == self.torrent.info.piece_hashes.len() - 1 {
                     self.torrent.info.length
                         - (self.torrent.info.piece_hashes.len() - 1) as u64
                             * self.torrent.info.piece_length
-                        - i * super::CHUNK_SIZE
+                        - i as u64 * super::CHUNK_SIZE
                 } else {
-                    self.torrent.info.piece_length - i * super::CHUNK_SIZE
+                    self.torrent.info.piece_length - i as u64  * super::CHUNK_SIZE
                 }
             } else {
                 super::CHUNK_SIZE

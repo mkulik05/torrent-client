@@ -17,6 +17,16 @@ use tokio::{
 };
 
 
+
+// remember to update bitfields for each piece
+struct TorrentBackupInfo {
+    pieces_tasks: PieceTask,
+    chunks_tasks: ChunksTask,
+    torrent: Torrent,
+    save_path: String,
+    pieces_done: usize 
+}
+
 #[derive(Clone, Debug)]
 struct UiHandle {
     ui_sender: Sender<UiMsg>,

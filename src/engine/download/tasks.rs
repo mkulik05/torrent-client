@@ -4,21 +4,21 @@ use std::sync::Arc;
 
 use super::super::torrent::Torrent;
 
-const CHUNKS_PER_TASK: u64 = 60;
+const CHUNKS_PER_TASK: u16 = 60;
 pub const MAX_CHUNKS_TASKS: usize = 100;
 pub const CHUNK_SIZE: u64 = 16384;
 
 #[derive(Debug)]
 pub struct PieceTask {
-    pub piece_i: u64,
-    pub total_chunks: u64,
-    pub chunks_done: u64,
+    pub piece_i: u16,
+    pub total_chunks: u16,
+    pub chunks_done: u16,
 }
 
 #[derive(Debug, Clone)]
 pub struct ChunksTask {
-    pub piece_i: u64,
-    pub chunks: Range<u64>,
+    pub piece_i: u16,
+    pub chunks: Range<u16>,
     pub includes_last_chunk: bool,
 }
 
@@ -30,15 +30,15 @@ pub fn get_piece_tasks(torrent: Arc<Torrent>, pieces_done: Vec<usize>) -> VecDeq
             continue;
         }
         pieces_tasks.push_back(PieceTask {
-            piece_i: i as u64,
+            piece_i: i as u16,
             total_chunks: if i == (torrent.info.piece_hashes.len() - 1) {
                 ((torrent.info.length
                     - (torrent.info.piece_hashes.len() - 1) as u64 * torrent.info.piece_length)
                     as f64
                     / CHUNK_SIZE as f64)
-                    .ceil() as u64
+                    .ceil() as u16
             } else {
-                total_chunks
+                total_chunks as u16
             },
             chunks_done: 0,
         })
