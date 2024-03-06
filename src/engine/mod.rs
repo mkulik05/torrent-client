@@ -4,9 +4,8 @@ use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-
-use tokio::sync::broadcast::Sender;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 use download::tasks::{ChunksTask, PieceTask, MAX_CHUNKS_TASKS};
@@ -20,7 +19,7 @@ use self::download::DataPiece;
 use crate::logger::{log, LogLevel};
 
 mod bencode;
-mod download;
+pub mod download;
 pub mod logger;
 mod peers;
 mod saver;
@@ -36,6 +35,23 @@ enum DownloadEvents {
 
 pub fn parse_torrent(torrent_path: &str) -> anyhow::Result<Torrent> {
     Ok(Torrent::new(torrent_path)?)
+}
+
+struct DownloaderInfo {
+    handle: Option<JoinHandle<()>>,
+    task: ChunksTask,
+}
+
+// Represents peer lifecycle in peers array
+enum DownloaderPeer {
+    // Peer is ready for work, can spawn new task for it
+    Free(Peer),
+
+    // Peer info including tak and handle
+    Busy(DownloaderInfo),
+
+    // Downloading finished, peer can be replaced with another (sent through PeerAdd msg)
+    Finished,
 }
 
 pub async fn download_torrent(
@@ -55,7 +71,7 @@ pub async fn download_torrent(
     let torrent = Arc::new(torrent);
     let (send_status, mut get_status) = mpsc::channel(270);
     let (send_data, get_data) = mpsc::channel::<DataPiece>(50);
-    let mut peers = Vec::new();
+    let mut peers: Vec<DownloaderPeer> = Vec::new();
 
     // tokio task spawns inside
     let peer_discovery_handle = tracker_resp
@@ -79,6 +95,7 @@ pub async fn download_torrent(
     download::tasks::add_chunks_tasks(&mut pieces_tasks, &mut chunks_tasks, MAX_CHUNKS_TASKS - 1);
 
     let mut no_free_peers = false;
+    let mut ui_reader = ui_handle.ui_sender.subscribe();
     loop {
         // checking that saver task is alive
         if saver_task.is_finished() {
@@ -91,17 +108,56 @@ pub async fn download_torrent(
         // if no free peers found, waiting for any message for some time,
         // if none appeared, searching for peers again
         let download_status = if no_free_peers {
-            let res = timeout(Duration::from_secs(20), get_status.recv()).await;
-            match res {
-                Err(_) => {
-                    tracker_resp
-                        .clone()
-                        .find_working_peers(send_data.clone(), send_status.clone());
-                    continue;
+            let output;
+            tokio::select! {
+                res = timeout(Duration::from_secs(20), get_status.recv()) => {
+                    match res {
+                        Err(_) => {
+                            tracker_resp
+                                .clone()
+                                .find_working_peers(send_data.clone(), send_status.clone());
+                            continue;
+                        }
+                        Ok(value) => {
+                            output = value;
+                        },
+                    }
                 }
-                Ok(value) => value,
+                Ok(UiMsg::ForceOff) = ui_reader.recv() => {
+                    log!(LogLevel::Debug, "Gor off msg, shutting down..");
+                    for peer in peers {
+                        if let DownloaderPeer::Busy(DownloaderInfo {
+                            handle: Some(handle),
+                            ..
+                        }) = peer
+                        {
+                            handle.abort();
+                        }
+                    }
+                    break;
+                }
             }
+            output
         } else {
+            let ui_msg = ui_reader.try_recv();
+            if let Ok(msg) = ui_msg {
+                match msg {
+                    UiMsg::ForceOff => {
+                        log!(LogLevel::Debug, "Gor off msg, shutting down..");
+                        for peer in peers {
+                            if let DownloaderPeer::Busy(DownloaderInfo {
+                                handle: Some(handle),
+                                ..
+                            }) = peer
+                            {
+                                handle.abort();
+                            }
+                        }
+                        break;
+                    }
+                    _ => {}
+                }
+            };
             let download_status = get_status.try_recv();
             if let Ok(val) = download_status {
                 Some(val)
@@ -136,11 +192,31 @@ pub async fn download_torrent(
                 }
                 DownloadEvents::PeerAdd(peer) => {
                     no_free_peers = false;
-                    let pos = peers.iter().position(|x: &Option<Peer>| x.is_none());
+
+                    // Checking did peer task finished or not
+                    for el in &mut peers {
+                        if let DownloaderPeer::Busy(DownloaderInfo {
+                            handle: Some(handle),
+                            ..
+                        }) = el
+                        {
+                            if handle.is_finished() {
+                                let _ = std::mem::replace(el, DownloaderPeer::Finished);
+                            }
+                        }
+                    }
+
+                    let pos = peers.iter().position(|x| {
+                        if let DownloaderPeer::Finished = x {
+                            true
+                        } else {
+                            false
+                        }
+                    });
                     if let Some(i) = pos {
-                        peers[i] = Some(peer);
+                        peers[i] = DownloaderPeer::Free(peer);
                     } else {
-                        peers.push(Some(peer))
+                        peers.push(DownloaderPeer::Free(peer))
                     }
                 }
             }
@@ -149,8 +225,13 @@ pub async fn download_torrent(
         download::tasks::add_chunks_tasks(&mut pieces_tasks, &mut chunks_tasks, 1);
         if !chunks_tasks.is_empty() {
             let send_status = send_status.clone();
-            let send_data = send_data.clone();
-            let some_pos = peers.iter().position(|x| x.is_some());
+            let some_pos = peers.iter().position(|x| {
+                if let DownloaderPeer::Free(_) = x {
+                    true
+                } else {
+                    false
+                }
+            });
             let some_pos = if some_pos.is_none() {
                 log!(LogLevel::Debug, "No free peers, skipping iteration");
                 no_free_peers = true;
@@ -158,17 +239,27 @@ pub async fn download_torrent(
             } else {
                 some_pos.unwrap()
             };
-            let peer = peers[some_pos].take().unwrap();
+            let DownloaderPeer::Free(ref mut peer) = peers[some_pos] else {
+                panic!("not possible")
+            };
             let task = chunks_tasks.pop_front().unwrap();
             if !peer.have_piece(task.piece_i as usize) {
-                peers[some_pos] = Some(peer);
                 let peers_len = peers.len();
                 peers.swap(some_pos, peers_len - 1);
                 chunks_tasks.push_front(task);
                 continue;
             }
+            let DownloaderPeer::Free(peer) = std::mem::replace(
+                &mut peers[some_pos],
+                DownloaderPeer::Busy(DownloaderInfo {
+                    handle: None,
+                    task: task.clone(),
+                }),
+            ) else {
+                panic!("not possible, we checked it")
+            };
             let downloader = DownloadReq::new(torrent.clone(), peer, task);
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 log!(
                     LogLevel::Debug,
                     "Peer {}, Curr task: {:?}",
@@ -191,11 +282,15 @@ pub async fn download_torrent(
                         .unwrap();
                 };
             });
+            if let DownloaderPeer::Busy(ref mut info) = peers[some_pos] {
+                info.handle = Some(handle);
+            }
         } else {
             log!(LogLevel::Info, "Finished downloading");
             break;
         }
     }
     peer_discovery_handle.abort();
+
     Ok(())
 }

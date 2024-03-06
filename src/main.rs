@@ -3,6 +3,7 @@ mod engine;
 use crate::engine::{
     download_torrent,
     logger::{self, log, LogLevel},
+    download::{PieceTask, ChunksTask},
     parse_torrent,
     torrent::Torrent,
 };
@@ -14,6 +15,7 @@ use tokio::{
     sync::broadcast::{self, Receiver, Sender},
     task::JoinHandle,
 };
+
 
 #[derive(Clone, Debug)]
 struct UiHandle {
@@ -29,25 +31,11 @@ impl UiHandle {
     }
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    logger::Logger::init(format!(
-        "/tmp/log{}.txt",
-        chrono::Local::now().format("%d-%m-%Y_%H-%M-%S")
-    ))?;
-
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 750.0]),
-        ..Default::default()
-    };
-    eframe::run_native("Encryptor", options, Box::new(|_| Box::<MyApp>::default())).unwrap();
-    Ok(())
-}
 
 #[derive(Clone, Debug)]
 enum UiMsg {
-    // torrent hash as param
     PieceDone,
+    ForceOff,
 }
 
 struct TorrentDownload {
@@ -64,6 +52,22 @@ struct MyApp {
     context_selected_row: Option<usize>,
     selected_row: Option<usize>,
     user_msg: Option<(String, String)>,
+}
+
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    logger::Logger::init(format!(
+        "/tmp/log{}.txt",
+        chrono::Local::now().format("%d-%m-%Y_%H-%M-%S")
+    ))?;
+
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 750.0]),
+        ..Default::default()
+    };
+    eframe::run_native("Encryptor", options, Box::new(|_| Box::<MyApp>::default())).unwrap();
+    Ok(())
 }
 
 impl Default for MyApp {
@@ -134,7 +138,8 @@ impl eframe::App for MyApp {
                 match msg {
                     UiMsg::PieceDone => {
                         torrent.pieces_done += 1;
-                    }
+                    }, 
+                    _ => {}
                 }
             }
         }
@@ -285,13 +290,15 @@ impl MyApp {
                             ui.label(row_index.to_string());
                         });
                         row.response().context_menu(|ui| {
-                            self.context_selected_row = Some(row_index);
-                            if ui.button("Item").clicked() {
+                            // self.context_selected_row = Some(row_index);
+                            if ui.button("Pause").clicked() {
                                 ui.close_menu();
                             };
-                            ui.menu_button("Item2", |ui| {
-                                ui.button("Hello2");
-                            });
+                            if ui.button("Delete").clicked() {
+                                self.torrents[row_index].sender.send(UiMsg::ForceOff).unwrap();
+                                self.torrents.remove(row_index);
+                                ui.close_menu();
+                            };
                         });
                         if row.response().clicked() {
                             self.selected_row = if let Some(n) = self.selected_row {

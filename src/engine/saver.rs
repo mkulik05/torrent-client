@@ -217,7 +217,9 @@ pub fn spawn_saver(
                         .unwrap();
                     *chunks_bitmap = PieceChunksBitmap::new(&torrent, data.piece_i as usize);
                 } else {
-                    ui_handle.send_with_update(UiMsg::PieceDone).unwrap();
+                    if let Err(e) = ui_handle.send_with_update(UiMsg::PieceDone) {
+                        log!(LogLevel::Error, "Failed to PieceDone msg");
+                    }
                     log!(
                         LogLevel::Info,
                         "Piece {} hash matched, downloaded: {}",
@@ -414,7 +416,9 @@ pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, src_path: &str, ui_ha
                         let hash = Torrent::bytes_hash(&piece_buf);
                         if hash == torrent.info.piece_hashes[i] {
                             sender.try_send((i, true)).unwrap();
-                            ui_handle.send_with_update(UiMsg::PieceDone).unwrap();
+                            if let Err(e) = ui_handle.send_with_update(UiMsg::PieceDone) {
+                                log!(LogLevel::Error, "Failed to PieceDone msg");
+                            }
                             log!(LogLevel::Info, "Piece {} is already downloaded", i);
                         } else {
                             sender.try_send((i, false)).unwrap();
@@ -460,7 +464,9 @@ pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, src_path: &str, ui_ha
                         let hash = Torrent::bytes_hash(&piece_buf);
                         if hash == torrent.info.piece_hashes[i] {
                             sender.try_send((i, true)).unwrap();
-                            ui_handle.send_with_update(UiMsg::PieceDone).unwrap();
+                            if let Err(e) = ui_handle.send_with_update(UiMsg::PieceDone) {
+                                log!(LogLevel::Error, "Failed to PieceDone msg");
+                            }
                             log!(LogLevel::Info, "Piece {} is already downloaded", i);
                         } else {
                             sender.try_send((i, false)).unwrap();

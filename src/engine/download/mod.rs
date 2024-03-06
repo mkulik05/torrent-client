@@ -10,7 +10,7 @@ use crate::logger::{LogLevel, log};
 use super::peers::{Peer, PeerMessage, PeerStatus};
 use super::torrent::Torrent;
 use super::DownloadEvents;
-use tasks::ChunksTask;
+pub use tasks::{ChunksTask, PieceTask};
 
 #[derive(Debug)]
 pub struct DownloadReq {
