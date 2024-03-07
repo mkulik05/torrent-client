@@ -13,6 +13,7 @@ use eframe::egui::{self, Ui};
 use egui::Color32;
 use egui_extras::{Column, TableBuilder};
 use std::collections::VecDeque;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -20,7 +21,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 enum DownloadStatus {
     Downloading,
     Paused,
@@ -59,6 +60,9 @@ enum UiMsg {
 
     // Pieces downloaded in total
     Pause(u16),
+
+    // Pieces done
+    Stop(u16),
 }
 
 struct WorkerInfo {
@@ -94,6 +98,8 @@ async fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
     eframe::run_native("Encryptor", options, Box::new(|_| Box::<MyApp>::default())).unwrap();
+
+    std::thread::sleep(Duration::from_secs(5));
     Ok(())
 }
 
@@ -173,6 +179,34 @@ impl MyApp {
 }
 
 impl eframe::App for MyApp {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        for q_torrent in &self.torrents {
+            match q_torrent.status {
+                DownloadStatus::Downloading => {
+                    if let Some(info) = &q_torrent.worker_info {
+                        info.sender
+                            .send(UiMsg::Stop(q_torrent.pieces_done as u16))
+                            .unwrap();
+                    }
+                }
+                DownloadStatus::Finished => {
+                    backup::backup_torrent(TorrentBackupInfo {
+                        pieces_tasks: VecDeque::new(),
+                        chunks_tasks: VecDeque::new(),
+                        torrent: q_torrent.torrent.clone(),
+                        save_path: "".to_string(),
+                        pieces_done: 0,
+                        status: DownloadStatus::Finished,
+                    })
+                    .unwrap();
+                }
+                DownloadStatus::Paused => {
+                    // Data is already backed up
+                }
+            }
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.inited {
             self.init(ctx);
@@ -247,14 +281,13 @@ impl MyApp {
         match backup::load_config() {
             Ok(backups) => {
                 for backup in backups {
-                    if let DownloadStatus::Paused | DownloadStatus::Finished = backup.status {
-                        self.torrents.push(TorrentDownload {
-                            status: backup.status,
-                            worker_info: None,
-                            torrent: backup.torrent.clone(),
-                            pieces_done: backup.pieces_done as u32,
-                        })
-                    } else {
+                    self.torrents.push(TorrentDownload {
+                        status: backup.status.clone(),
+                        worker_info: None,
+                        torrent: backup.torrent.clone(),
+                        pieces_done: backup.pieces_done as u32,
+                    });
+                    if let DownloadStatus::Downloading = backup.status {
                         self.start_download(TorrentInfo::Backup(backup), true, ctx);
                     }
                 }
@@ -339,6 +372,14 @@ impl MyApp {
                             let progress_bar = {
                                 match self.torrents[row_index].status {
                                     DownloadStatus::Downloading => {
+                                        if self.torrents[row_index].pieces_done
+                                        == self.torrents[row_index]
+                                            .torrent
+                                            .info
+                                            .piece_hashes
+                                            .len() as u32 {
+                                                self.torrents[row_index].status = DownloadStatus::Finished;
+                                            }
                                         let progress = self.torrents[row_index].pieces_done as f32
                                             / self.torrents[row_index]
                                                 .torrent

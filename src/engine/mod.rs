@@ -182,7 +182,7 @@ pub async fn download_torrent(
                         },
                     }
                 }
-                msg @ Ok(UiMsg::ForceOff | UiMsg::Pause(_)) = ui_reader.recv() => {
+                msg @ Ok(UiMsg::ForceOff | UiMsg::Pause(_) | UiMsg::Stop(_)) = ui_reader.recv() => {
                     let msg = msg.unwrap();
                     for peer in peers {
                         if let DownloaderPeer::Busy(DownloaderInfo {
@@ -198,16 +198,20 @@ pub async fn download_torrent(
                         UiMsg::ForceOff => {
                             log!(LogLevel::Debug, "Gor off msg, shutting down..");
                         },
-                        UiMsg::Pause(done) => {
+                        ref msg @ UiMsg::Stop(done) | ref msg @ UiMsg::Pause(done) => {
                             log!(LogLevel::Debug, "Gor pause msg, shutting down..");
                             backup::backup_torrent(
-                                TorrentBackupInfo { 
-                                    pieces_tasks, 
-                                    chunks_tasks, 
-                                    torrent: Arc::as_ref(&torrent).clone(), 
-                                    save_path: save_path.to_string(), 
-                                    pieces_done: done as usize, 
-                                    status: crate::DownloadStatus::Paused 
+                                TorrentBackupInfo {
+                                    pieces_tasks,
+                                    chunks_tasks,
+                                    torrent: Arc::as_ref(&torrent).clone(),
+                                    save_path: save_path.to_string(),
+                                    pieces_done: done as usize,
+                                    status: if let UiMsg::Pause(_) = msg { 
+                                        crate::DownloadStatus::Paused
+                                    } else {
+                                        crate::DownloadStatus::Downloading
+                                    }
                                 },
                             )?
                         },
@@ -232,6 +236,22 @@ pub async fn download_torrent(
                                 handle.abort();
                             }
                         }
+                        break;
+                    }
+                    ref msg @ UiMsg::Stop(done) | ref msg @ UiMsg::Pause(done)  => {
+                        log!(LogLevel::Debug, "Gor pause msg, shutting down..");
+                        backup::backup_torrent(TorrentBackupInfo {
+                            pieces_tasks,
+                            chunks_tasks,
+                            torrent: Arc::as_ref(&torrent).clone(),
+                            save_path: save_path.to_string(),
+                            pieces_done: done as usize,
+                            status: if let UiMsg::Pause(_) = msg { 
+                                crate::DownloadStatus::Paused
+                            } else {
+                                crate::DownloadStatus::Downloading
+                            },
+                        })?;
                         break;
                     }
                     _ => {}

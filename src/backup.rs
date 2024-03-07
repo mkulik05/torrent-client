@@ -74,10 +74,10 @@ pub fn load_backup(info_hash: &Vec<u8>) -> anyhow::Result<TorrentBackupInfo> {
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
 
-    let mut backups: Vec<TorrentBackupInfo> = bincode::deserialize(&bytes)?;
+    let backups: Vec<TorrentBackupInfo> = bincode::deserialize(&bytes)?;
 
 
-    for (i, backup) in backups.into_iter().enumerate() {
+    for backup in backups {
         if backup.torrent.info_hash == *info_hash {
             return Ok(backup)
         }
