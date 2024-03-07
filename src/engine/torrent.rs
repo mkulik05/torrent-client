@@ -2,25 +2,26 @@ use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 
 use super::bencode::BencodeValue;
 use super::logger::{LogLevel, log};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TorrentFile {
     pub length: u64,
     pub path: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Torrent {
     pub tracker_url: String,
     pub info: TorrentInfo,
     pub info_hash: Vec<u8>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TorrentInfo {
     // total length
     pub length: u64,

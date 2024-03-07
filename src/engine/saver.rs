@@ -7,16 +7,17 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
-use tokio::sync::broadcast::Sender;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
-use crate::{UiMsg, UiHandle};
+use crate::TorrentBackupInfo;
+use crate::{UiHandle, UiMsg};
 
+use super::download::tasks::CHUNK_SIZE;
 use super::download::DataPiece;
-use super::logger::{LogLevel, log};
+use super::logger::{log, LogLevel};
 use super::{DownloadEvents, Torrent};
 
 #[derive(Debug)]
@@ -43,6 +44,25 @@ impl PieceChunksBitmap {
             last_chunk_mask,
         }
     }
+
+    fn from_backup(torrent: &Torrent, piece_i: usize, done: usize) -> Self {
+        let mut bitmap = PieceChunksBitmap::new(torrent, piece_i);
+        for i in 0..done {
+            bitmap.add_chunk(CHUNK_SIZE as usize * i);
+        }
+        bitmap
+    }
+
+    fn remove_chunk(&mut self, begin: usize) {
+        let chunk_i = begin / super::CHUNK_SIZE as usize;
+        let bitmap_cell_i = chunk_i / 8;
+        let mut ones_mask = 0b1111_1111;
+        let mut mask = 0b1000_0000;
+        mask >>= chunk_i % 8;
+        ones_mask ^= mask;
+        self.bitmap[bitmap_cell_i] &= ones_mask;
+    }
+
     fn add_chunk(&mut self, begin: usize) {
         let chunk_i = begin / super::CHUNK_SIZE as usize;
         let bitmap_cell_i = chunk_i / 8;
@@ -50,6 +70,7 @@ impl PieceChunksBitmap {
         mask >>= chunk_i % 8;
         self.bitmap[bitmap_cell_i] |= mask;
     }
+
     fn chunk_exist(&self, begin: usize) -> bool {
         let chunk_i = begin / super::CHUNK_SIZE as usize;
         let bitmap_cell_i = chunk_i / 8;
@@ -95,7 +116,8 @@ pub fn spawn_saver(
     mut get_data: Receiver<DataPiece>,
     send_status: mpsc::Sender<DownloadEvents>,
     pieces_done: usize,
-    ui_handle: UiHandle
+    ui_handle: UiHandle,
+    backup: Option<TorrentBackupInfo>,
 ) -> JoinHandle<anyhow::Result<()>> {
     // variable containing increasing array starting from 0;
     // each element arr[i] equals arr[i - 1] + file_sizes[i]
@@ -114,6 +136,36 @@ pub fn spawn_saver(
     // notify about finishing donwload
     tokio::spawn(async move {
         let mut pieces_chunks: HashMap<u64, PieceChunksBitmap> = HashMap::new();
+        if let Some(backup) = backup {
+            // For each piece marking done pieces
+            for p_task in backup.pieces_tasks {
+                pieces_chunks.insert(
+                    p_task.piece_i as u64,
+                    PieceChunksBitmap::from_backup(
+                        &torrent,
+                        p_task.piece_i as usize,
+                        p_task.chunks_done as usize,
+                    ),
+                );
+            }
+            log!(LogLevel::Info, "fjdsodfjios\n\n\n");
+            for c_task in backup.chunks_tasks {
+                if let std::collections::hash_map::Entry::Vacant(e) =
+                    pieces_chunks.entry(c_task.piece_i as u64)
+                {
+                    e.insert(PieceChunksBitmap::from_backup(
+                        &torrent,
+                        c_task.piece_i as usize,
+                        0,
+                    ));
+                } else {
+                    let bitmap = pieces_chunks.get_mut(&(c_task.piece_i as u64)).unwrap();
+                    for c in c_task.chunks {
+                        bitmap.remove_chunk(CHUNK_SIZE as usize * c as usize);
+                    }
+                }
+            }
+        }
         let mut pieces_finished = pieces_done;
         while let Some(data) = get_data.recv().await {
             log!(
@@ -370,7 +422,11 @@ fn read_piece_from_files(
     Ok(())
 }
 
-pub async fn find_downloaded_pieces(torrent: Arc<Torrent>, src_path: &str, ui_handle: UiHandle) -> Vec<usize> {
+pub async fn find_downloaded_pieces(
+    torrent: Arc<Torrent>,
+    src_path: &str,
+    ui_handle: UiHandle,
+) -> Vec<usize> {
     let mut downloaded_pieces = Vec::new();
     let mut pieces_processed = 0;
     let mut pieces_done = 0;

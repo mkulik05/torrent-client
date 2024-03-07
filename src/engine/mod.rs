@@ -1,5 +1,5 @@
-use crate::{UiHandle, UiMsg};
-
+use crate::backup;
+use crate::{TorrentBackupInfo, UiHandle, UiMsg};
 use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Arc;
@@ -54,27 +54,40 @@ enum DownloaderPeer {
     Finished,
 }
 
+pub enum TorrentInfo {
+    Torrent(Torrent),
+    Backup(TorrentBackupInfo),
+}
+
 pub async fn download_torrent(
-    torrent_path: String,
+    torrent_info: TorrentInfo,
     path: &str,
     ui_handle: UiHandle,
 ) -> anyhow::Result<()> {
-    let torrent = Torrent::new(torrent_path.as_str())?;
+    let torrent = match torrent_info {
+        TorrentInfo::Torrent(ref torrent) => torrent.clone(),
+        TorrentInfo::Backup(ref backup) => backup.torrent.clone(),
+    };
 
     if torrent.info.piece_hashes.len() > u16::MAX as usize {
-        anyhow::bail!("Too many pieces");   
-    }
-
-    if torrent.info.piece_length / CHUNK_SIZE > u16::MAX as u64 {
         anyhow::bail!("Too many pieces");
     }
 
-    let file_path = if Path::new(path).is_dir() {
-        Path::new(path).join(&torrent.info.name)
+    if torrent.info.piece_length / CHUNK_SIZE > u16::MAX as u64 {
+        anyhow::bail!("Too many chunks");
+    }
+
+    let save_path = if let TorrentInfo::Backup(ref backup) = torrent_info {
+        Path::new(&backup.save_path).to_path_buf()
     } else {
-        Path::new(path).to_path_buf()
+        if Path::new(path).is_dir() {
+            Path::new(path).join(&torrent.info.name)
+        } else {
+            Path::new(path).to_path_buf()
+        }
     };
-    let file_path = file_path.to_str().unwrap();
+
+    let save_path = save_path.to_str().unwrap();
     let tracker_req = TrackerReq::init(&torrent);
     let tracker_resp = Arc::new(tracker_req.send(&torrent).await?);
     let torrent = Arc::new(torrent);
@@ -87,21 +100,58 @@ pub async fn download_torrent(
         .clone()
         .find_working_peers(send_data.clone(), send_status.clone());
 
-    let pieces_done =
-        saver::find_downloaded_pieces(torrent.clone(), file_path, ui_handle.clone()).await;
+    let pieces_done = if let TorrentInfo::Torrent(_) = torrent_info {
+        Some(saver::find_downloaded_pieces(torrent.clone(), save_path, ui_handle.clone()).await)
+    } else {
+        None
+    };
+
+    let pieces_done_n = if let TorrentInfo::Backup(ref backup) = torrent_info {
+        backup.pieces_done
+    } else {
+        pieces_done.as_ref().unwrap().len()
+    };
+
+    let mut pieces_tasks;
+    let mut chunks_tasks;
+
+    match torrent_info {
+        TorrentInfo::Torrent(_) => {
+            pieces_tasks = download::tasks::get_piece_tasks(torrent.clone(), pieces_done.unwrap());
+            chunks_tasks = VecDeque::new();
+            download::tasks::add_chunks_tasks(
+                &mut pieces_tasks,
+                &mut chunks_tasks,
+                MAX_CHUNKS_TASKS - 1,
+            );
+        }
+        TorrentInfo::Backup(ref info) => {
+            pieces_tasks = info.pieces_tasks.clone();
+            chunks_tasks = info.chunks_tasks.clone();
+            let len: usize = chunks_tasks.len();
+            if MAX_CHUNKS_TASKS as i32 - chunks_tasks.len() as i32 > 0 {
+                download::tasks::add_chunks_tasks(
+                    &mut pieces_tasks,
+                    &mut chunks_tasks,
+                    MAX_CHUNKS_TASKS - len,
+                );
+            }
+        }
+    }
 
     let saver_task = saver::spawn_saver(
-        file_path.to_string(),
+        save_path.to_string(),
         torrent.clone(),
         get_data,
         send_status.clone(),
-        pieces_done.len(),
+        pieces_done_n,
         ui_handle.clone(),
+        if let TorrentInfo::Backup(backup) = torrent_info {
+            Some(backup)
+        } else {
+            None
+        },
     );
-    let mut pieces_tasks = download::tasks::get_piece_tasks(torrent.clone(), pieces_done);
-    let mut chunks_tasks = VecDeque::new();
-
-    download::tasks::add_chunks_tasks(&mut pieces_tasks, &mut chunks_tasks, MAX_CHUNKS_TASKS - 1);
 
     let mut no_free_peers = false;
     let mut ui_reader = ui_handle.ui_sender.subscribe();
@@ -132,16 +182,36 @@ pub async fn download_torrent(
                         },
                     }
                 }
-                Ok(UiMsg::ForceOff) = ui_reader.recv() => {
-                    log!(LogLevel::Debug, "Gor off msg, shutting down..");
+                msg @ Ok(UiMsg::ForceOff | UiMsg::Pause(_)) = ui_reader.recv() => {
+                    let msg = msg.unwrap();
                     for peer in peers {
                         if let DownloaderPeer::Busy(DownloaderInfo {
                             handle: Some(handle),
-                            ..
+                            task
                         }) = peer
                         {
+                            chunks_tasks.push_front(task);
                             handle.abort();
                         }
+                    }
+                    match msg {
+                        UiMsg::ForceOff => {
+                            log!(LogLevel::Debug, "Gor off msg, shutting down..");
+                        },
+                        UiMsg::Pause(done) => {
+                            log!(LogLevel::Debug, "Gor pause msg, shutting down..");
+                            backup::backup_torrent(
+                                TorrentBackupInfo { 
+                                    pieces_tasks, 
+                                    chunks_tasks, 
+                                    torrent: Arc::as_ref(&torrent).clone(), 
+                                    save_path: save_path.to_string(), 
+                                    pieces_done: done as usize, 
+                                    status: crate::DownloadStatus::Paused 
+                                },
+                            )?
+                        },
+                        _ => {}
                     }
                     break;
                 }

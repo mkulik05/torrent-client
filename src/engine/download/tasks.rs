@@ -2,20 +2,22 @@ use std::collections::VecDeque;
 use std::ops::Range;
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use super::super::torrent::Torrent;
 
 const CHUNKS_PER_TASK: u16 = 60;
 pub const MAX_CHUNKS_TASKS: usize = 100;
 pub const CHUNK_SIZE: u64 = 16384;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PieceTask {
     pub piece_i: u16,
     pub total_chunks: u16,
     pub chunks_done: u16,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunksTask {
     pub piece_i: u16,
     pub chunks: Range<u16>,
@@ -73,6 +75,6 @@ pub fn add_chunks_tasks(
             chunks: task.chunks_done..chunks_up_border,
             includes_last_chunk: chunks_up_border == task.total_chunks,
         });
-        task.chunks_done += CHUNKS_PER_TASK;
+        task.chunks_done = chunks_up_border;
     }
 }
