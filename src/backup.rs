@@ -24,7 +24,6 @@ pub fn load_config() -> anyhow::Result<Vec<TorrentBackupInfo>> {
     Ok(bincode::deserialize(&bytes)?)
 }
 
-
 pub fn backup_torrent(data: TorrentBackupInfo) -> anyhow::Result<()> {
     let path = get_conf_path()?;
     let mut file = File::options()
@@ -68,7 +67,6 @@ pub fn backup_torrent(data: TorrentBackupInfo) -> anyhow::Result<()> {
 }
 
 pub fn load_backup(info_hash: &Vec<u8>) -> anyhow::Result<TorrentBackupInfo> {
-
     let path = get_conf_path()?;
     let mut file = File::open(path)?;
     let mut bytes = Vec::new();
@@ -76,12 +74,50 @@ pub fn load_backup(info_hash: &Vec<u8>) -> anyhow::Result<TorrentBackupInfo> {
 
     let backups: Vec<TorrentBackupInfo> = bincode::deserialize(&bytes)?;
 
-
     for backup in backups {
         if backup.torrent.info_hash == *info_hash {
-            return Ok(backup)
+            return Ok(backup);
         }
     }
 
     anyhow::bail!("Torrent not found in file");
+}
+
+pub fn remove_torrent(info_hash: &Vec<u8>) -> anyhow::Result<()> {
+    let path = get_conf_path()?;
+    let mut file = File::options()
+        .create(true)
+        .write(true)
+        .read(true)
+        .open(path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+
+    let mut backups: Vec<TorrentBackupInfo> = bincode::deserialize(&bytes).unwrap_or_else(|_| {
+        log!(
+            LogLevel::Error,
+            "Backup file is damaged, it will be recreated"
+        );
+        Vec::new()
+    });
+
+    let mut delete_i = None;
+
+    for (i, backup) in backups.iter().enumerate() {
+        if backup.torrent.info_hash == *info_hash {
+            delete_i = Some(i);
+            break;
+        }
+    }
+
+    if let Some(i) = delete_i {
+        backups.remove(i);
+        let bytes = bincode::serialize(&backups)?;
+
+        file.seek(std::io::SeekFrom::Start(0))?;
+        file.write_all(&bytes)?;
+        file.set_len(bytes.len() as u64)?;
+    }
+
+    Ok(())
 }

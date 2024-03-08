@@ -80,7 +80,6 @@ struct TorrentDownload {
 
 struct MyApp {
     torrents: Vec<TorrentDownload>,
-    context_selected_row: Option<usize>,
     selected_row: Option<usize>,
     user_msg: Option<(String, String)>,
     inited: bool,
@@ -107,7 +106,6 @@ impl Default for MyApp {
     fn default() -> Self {
         Self {
             torrents: Vec::new(),
-            context_selected_row: None,
             selected_row: None,
             user_msg: None,
             inited: false,
@@ -128,7 +126,7 @@ impl MyApp {
                 .position(|x| x.torrent.info_hash == torrent.info_hash)
                 .is_none()
         {
-            let (sender, receiver) = broadcast::channel(100);
+            let (sender, receiver) = broadcast::channel(20_000);
             let handle = {
                 let name = torrent.info.name.clone();
                 let sender = sender.clone();
@@ -216,10 +214,13 @@ impl eframe::App for MyApp {
             if torrent.worker_info.is_none() {
                 continue;
             }
-            if let Ok(msg) = torrent.worker_info.as_mut().unwrap().receiver.try_recv() {
+            while let Ok(msg) = torrent.worker_info.as_mut().unwrap().receiver.try_recv() {
                 match msg {
                     UiMsg::PieceDone => {
                         torrent.pieces_done += 1;
+                        if torrent.pieces_done == torrent.torrent.info.piece_hashes.len() as u32 {
+                            torrent.status = DownloadStatus::Finished;
+                        }
                     }
                     _ => {}
                 }
@@ -294,6 +295,13 @@ impl MyApp {
             }
             Err(e) => log!(LogLevel::Error, "Failed to open backup file: {e}"),
         }
+        let ctx = ctx.clone(); 
+        tokio::spawn(async move {
+            loop {
+                ctx.request_repaint();
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        });
     }
     fn show_message(&mut self, ctx: &egui::Context) {
         let Some((header, msg)) = self.user_msg.clone() else {
@@ -372,14 +380,6 @@ impl MyApp {
                             let progress_bar = {
                                 match self.torrents[row_index].status {
                                     DownloadStatus::Downloading => {
-                                        if self.torrents[row_index].pieces_done
-                                        == self.torrents[row_index]
-                                            .torrent
-                                            .info
-                                            .piece_hashes
-                                            .len() as u32 {
-                                                self.torrents[row_index].status = DownloadStatus::Finished;
-                                            }
                                         let progress = self.torrents[row_index].pieces_done as f32
                                             / self.torrents[row_index]
                                                 .torrent
@@ -482,6 +482,8 @@ impl MyApp {
                                 if let Some(ref info) = self.torrents[row_index].worker_info {
                                     info.sender.send(UiMsg::ForceOff).unwrap();
                                 }
+                                backup::remove_torrent(&self.torrents[row_index].torrent.info_hash)
+                                    .unwrap();
                                 self.torrents.remove(row_index);
                                 ui.close_menu();
                             };

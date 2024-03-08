@@ -37,12 +37,14 @@ pub fn parse_torrent(torrent_path: &str) -> anyhow::Result<Torrent> {
     Ok(Torrent::new(torrent_path)?)
 }
 
+#[derive(Debug)]
 struct DownloaderInfo {
     handle: Option<JoinHandle<()>>,
     task: ChunksTask,
 }
 
 // Represents peer lifecycle in peers array
+#[derive(Debug)]
 enum DownloaderPeer {
     // Peer is ready for work, can spawn new task for it
     Free(Peer),
@@ -153,9 +155,16 @@ pub async fn download_torrent(
         },
     );
 
-    let mut no_free_peers = false;
+    if pieces_tasks.is_empty() && chunks_tasks.is_empty() {
+        log!(LogLevel::Info, "Done");
+        peer_discovery_handle.abort();
+        return Ok(());
+    }
+
+    let mut wait_for_channel_msg = false;
     let mut ui_reader = ui_handle.ui_sender.subscribe();
     loop {
+
         // checking that saver task is alive
         if saver_task.is_finished() {
             if let Ok(res) = saver_task.await {
@@ -166,7 +175,7 @@ pub async fn download_torrent(
 
         // if no free peers found, waiting for any message for some time,
         // if none appeared, searching for peers again
-        let download_status = if no_free_peers {
+        let download_status = if wait_for_channel_msg {
             let output;
             tokio::select! {
                 res = timeout(Duration::from_secs(20), get_status.recv()) => {
@@ -207,7 +216,7 @@ pub async fn download_torrent(
                                     torrent: Arc::as_ref(&torrent).clone(),
                                     save_path: save_path.to_string(),
                                     pieces_done: done as usize,
-                                    status: if let UiMsg::Pause(_) = msg { 
+                                    status: if let UiMsg::Pause(_) = msg {
                                         crate::DownloadStatus::Paused
                                     } else {
                                         crate::DownloadStatus::Downloading
@@ -238,7 +247,7 @@ pub async fn download_torrent(
                         }
                         break;
                     }
-                    ref msg @ UiMsg::Stop(done) | ref msg @ UiMsg::Pause(done)  => {
+                    ref msg @ UiMsg::Stop(done) | ref msg @ UiMsg::Pause(done) => {
                         log!(LogLevel::Debug, "Gor pause msg, shutting down..");
                         backup::backup_torrent(TorrentBackupInfo {
                             pieces_tasks,
@@ -246,7 +255,7 @@ pub async fn download_torrent(
                             torrent: Arc::as_ref(&torrent).clone(),
                             save_path: save_path.to_string(),
                             pieces_done: done as usize,
-                            status: if let UiMsg::Pause(_) = msg { 
+                            status: if let UiMsg::Pause(_) = msg {
                                 crate::DownloadStatus::Paused
                             } else {
                                 crate::DownloadStatus::Downloading
@@ -290,7 +299,7 @@ pub async fn download_torrent(
                     chunks_tasks.push_front(chunk);
                 }
                 DownloadEvents::PeerAdd(peer) => {
-                    no_free_peers = false;
+                    wait_for_channel_msg = false;
 
                     // Checking did peer task finished or not
                     for el in &mut peers {
@@ -333,7 +342,7 @@ pub async fn download_torrent(
             });
             let some_pos = if some_pos.is_none() {
                 log!(LogLevel::Debug, "No free peers, skipping iteration");
-                no_free_peers = true;
+                wait_for_channel_msg = true;
                 continue;
             } else {
                 some_pos.unwrap()
@@ -385,8 +394,8 @@ pub async fn download_torrent(
                 info.handle = Some(handle);
             }
         } else {
-            log!(LogLevel::Info, "Finished downloading");
-            break;
+            wait_for_channel_msg = true;
+            continue;
         }
     }
     peer_discovery_handle.abort();

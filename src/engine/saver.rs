@@ -148,21 +148,21 @@ pub fn spawn_saver(
                     ),
                 );
             }
-            log!(LogLevel::Info, "fjdsodfjios\n\n\n");
             for c_task in backup.chunks_tasks {
                 if let std::collections::hash_map::Entry::Vacant(e) =
                     pieces_chunks.entry(c_task.piece_i as u64)
                 {
+                    let piece_length = torrent.get_piece_length(c_task.piece_i as usize);
+                    let chunks_n = (piece_length as f64 / super::CHUNK_SIZE as f64).ceil() as i32;
                     e.insert(PieceChunksBitmap::from_backup(
                         &torrent,
                         c_task.piece_i as usize,
-                        0,
+                        chunks_n as usize,
                     ));
-                } else {
-                    let bitmap = pieces_chunks.get_mut(&(c_task.piece_i as u64)).unwrap();
-                    for c in c_task.chunks {
-                        bitmap.remove_chunk(CHUNK_SIZE as usize * c as usize);
-                    }
+                }
+                let bitmap = pieces_chunks.get_mut(&(c_task.piece_i as u64)).unwrap();
+                for c in c_task.chunks {
+                    bitmap.remove_chunk(CHUNK_SIZE as usize * c as usize);
                 }
             }
         }
@@ -433,7 +433,7 @@ pub async fn find_downloaded_pieces(
 
     if Path::new(src_path).exists() {
         let pieces_i = torrent.info.piece_hashes.len();
-        let (sender, mut receiver) = mpsc::channel(200);
+        let (sender, mut receiver) = mpsc::channel(500);
         if let Some(ref files) = torrent.info.files {
             let size_progression = {
                 let mut arr = Vec::with_capacity(files.len());
@@ -482,7 +482,6 @@ pub async fn find_downloaded_pieces(
                     });
                     pieces_processed += 1;
                 }
-
                 if let Ok((i, have)) = receiver.try_recv() {
                     pieces_done += 1;
                     if have {
