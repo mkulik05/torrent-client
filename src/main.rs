@@ -11,8 +11,10 @@ use crate::engine::{
 };
 use eframe::egui::{self, Ui};
 use egui::Color32;
+use egui::{ViewportBuilder, ViewportId};
 use egui_extras::{Column, TableBuilder};
 use std::collections::VecDeque;
+use std::path::Path;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -21,7 +23,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 enum DownloadStatus {
     Downloading,
     Paused,
@@ -29,7 +31,7 @@ enum DownloadStatus {
 }
 
 // remember to update bitfields for each piece
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct TorrentBackupInfo {
     pieces_tasks: VecDeque<PieceTask>,
     chunks_tasks: VecDeque<ChunksTask>,
@@ -55,7 +57,8 @@ impl UiHandle {
 
 #[derive(Clone, Debug)]
 enum UiMsg {
-    PieceDone,
+    TorrentFinished,
+    PieceDone(u16),
     ForceOff,
 
     // Pieces downloaded in total
@@ -83,6 +86,10 @@ struct MyApp {
     selected_row: Option<usize>,
     user_msg: Option<(String, String)>,
     inited: bool,
+    pieces: Vec<u16>,
+    import_opened: bool,
+    import_dest_dir: String,
+    import_torrent: Option<Torrent>
 }
 
 #[tokio::main]
@@ -96,7 +103,7 @@ async fn main() -> anyhow::Result<()> {
         viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 750.0]),
         ..Default::default()
     };
-    eframe::run_native("Encryptor", options, Box::new(|_| Box::<MyApp>::default())).unwrap();
+    eframe::run_native("MkTorrent", options, Box::new(|_| Box::<MyApp>::default())).unwrap();
 
     std::thread::sleep(Duration::from_secs(5));
     Ok(())
@@ -109,6 +116,10 @@ impl Default for MyApp {
             selected_row: None,
             user_msg: None,
             inited: false,
+            pieces: Vec::new(),
+            import_opened: false,
+            import_dest_dir: String::new(),
+            import_torrent: None
         }
     }
 }
@@ -119,59 +130,51 @@ impl MyApp {
             TorrentInfo::Torrent(torrent) => torrent.clone(),
             TorrentInfo::Backup(backup) => backup.torrent.clone(),
         };
-        if resume
-            || self
-                .torrents
-                .iter()
-                .position(|x| x.torrent.info_hash == torrent.info_hash)
-                .is_none()
-        {
-            let (sender, receiver) = broadcast::channel(20_000);
-            let handle = {
-                let name = torrent.info.name.clone();
-                let sender = sender.clone();
-                let ctx = ctx.clone();
-                tokio::spawn(async move {
-                    log!(LogLevel::Info, "Strating torrent downloading: {name}");
-                    download_torrent(
-                        torrent_info,
-                        "/home/mkul1k/Videos",
-                        UiHandle {
-                            ui_sender: sender,
-                            ctx,
-                        },
-                    )
-                    .await
-                    .unwrap();
-                    log!(LogLevel::Info, "{} download finished", name);
-                })
-            };
-            let info = WorkerInfo {
-                handle,
-                sender,
-                receiver,
-            };
 
-            let torrent_i = self
-                .torrents
-                .iter()
-                .position(|x| x.torrent.info_hash == torrent.info_hash);
-            if torrent_i.is_none() {
-                self.torrents.push(TorrentDownload {
-                    torrent,
-                    status: DownloadStatus::Downloading,
-                    worker_info: Some(info),
-                    pieces_done: 0,
-                });
+        let (sender, receiver) = broadcast::channel(20_000);
+        let handle = {
+            let name = torrent.info.name.clone();
+            let sender = sender.clone();
+            let ctx = ctx.clone();
+            let folder = if let TorrentInfo::Backup(ref backup) = torrent_info {
+                backup.save_path.clone()
             } else {
-                self.torrents[torrent_i.unwrap()].worker_info = Some(info);
-            }
+                self.import_dest_dir.clone()
+            };
+            tokio::spawn(async move {
+                log!(LogLevel::Info, "Strating torrent downloading: {name}");
+                download_torrent(
+                    torrent_info,
+                    &folder,
+                    UiHandle {
+                        ui_sender: sender,
+                        ctx,
+                    },
+                )
+                .await
+                .unwrap();
+                log!(LogLevel::Info, "{} download finished", name);
+            })
+        };
+        let info = WorkerInfo {
+            handle,
+            sender,
+            receiver,
+        };
+
+        let torrent_i = self
+            .torrents
+            .iter()
+            .position(|x| x.torrent.info_hash == torrent.info_hash);
+        if torrent_i.is_none() {
+            self.torrents.push(TorrentDownload {
+                torrent,
+                status: DownloadStatus::Downloading,
+                worker_info: Some(info),
+                pieces_done: 0,
+            });
         } else {
-            self.user_msg = Some((
-                "Alert".to_string(),
-                "This torrent is already imported".to_string(),
-            ));
-            ctx.request_repaint();
+            self.torrents[torrent_i.unwrap()].worker_info = Some(info);
         }
     }
 }
@@ -210,17 +213,71 @@ impl eframe::App for MyApp {
             self.init(ctx);
         }
 
+        if self.import_opened {
+            ctx.show_viewport_immediate(
+                ViewportId::from_hash_of("Import torrent window"),
+                ViewportBuilder::default()
+                    .with_title("Import torrent")
+                    .with_inner_size([500.0, 500.0]),
+                |ctx, _| {
+                    if ctx.input(|i| i.viewport().close_requested()) {
+                        self.import_opened = false;
+                    }
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        ui.vertical(|ui| {
+                            ui.label("Destination folder:");
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.import_dest_dir)
+                                        .desired_width(100.0)
+                                        .desired_rows(1)
+                                        .id_source("import dir"),
+                                );
+                                if ui.button("Select folder").clicked() {
+                                    let file = rfd::FileDialog::new().pick_folder();
+                                    if let Some(path) = file {
+                                        self.import_dest_dir = path.to_str().unwrap().to_owned();
+                                    }
+                                };
+                            });
+                        });
+                        let dest_path = Path::new(&self.import_dest_dir);
+                        let button_enabled = if !self.import_dest_dir.is_empty()
+                            && dest_path.exists()
+                            && dest_path.is_dir()
+                        {
+                            true
+                        } else {
+                            false
+                        };
+                        ui.set_enabled(button_enabled);
+                        if ui.button("Start").clicked() {
+                            self.import_opened = false;
+                            self.start_download(TorrentInfo::Torrent(self.import_torrent.as_ref().unwrap().clone()), false, ctx);
+                        }
+                    });
+                },
+            );
+            ctx.request_repaint();
+        }
+
         for torrent in &mut self.torrents {
             if torrent.worker_info.is_none() {
                 continue;
             }
             while let Ok(msg) = torrent.worker_info.as_mut().unwrap().receiver.try_recv() {
                 match msg {
-                    UiMsg::PieceDone => {
+                    UiMsg::PieceDone(piece) => {
+                        self.pieces.push(piece);
+                        log!(LogLevel::Info, "{:?}", self.pieces);
                         torrent.pieces_done += 1;
                         if torrent.pieces_done == torrent.torrent.info.piece_hashes.len() as u32 {
                             torrent.status = DownloadStatus::Finished;
                         }
+                    }
+                    UiMsg::TorrentFinished => {
+                        torrent.status = DownloadStatus::Finished;
+                        torrent.pieces_done = torrent.torrent.info.piece_hashes.len() as u32;
                     }
                     _ => {}
                 }
@@ -232,6 +289,7 @@ impl eframe::App for MyApp {
         egui::TopBottomPanel::top("top_panel")
             .exact_height(50.0)
             .show(ctx, |ui| {
+                ui.set_enabled(!self.import_opened);
                 egui::menu::bar(ui, |ui| {
                     ui.menu_button("File", |ui| {
                         if ui.button("Open").clicked() {
@@ -242,7 +300,20 @@ impl eframe::App for MyApp {
                             if let Some(path) = file {
                                 let torrent = parse_torrent(path.to_str().unwrap());
                                 if let Ok(torrent) = torrent {
-                                    self.start_download(TorrentInfo::Torrent(torrent), false, ctx);
+                                    if self
+                                    .torrents
+                                    .iter()
+                                    .position(|x| x.torrent.info_hash == torrent.info_hash)
+                                    .is_none() {
+                                        self.import_torrent = Some(torrent);
+                                        self.import_opened = true;
+                                    } else {
+                                        self.user_msg = Some((
+                                            "Alert".to_string(),
+                                            "This torrent is already imported".to_string(),
+                                        ));
+                                        ctx.request_repaint();
+                                    }
                                 }
                             }
                         }
@@ -255,6 +326,7 @@ impl eframe::App for MyApp {
         egui::TopBottomPanel::bottom("bottom_panel")
             .resizable(true)
             .show(ctx, |ui| {
+                ui.set_enabled(!self.import_opened);
                 egui::ScrollArea::vertical()
                     .auto_shrink(false)
                     .id_source("bottom panel scroll")
@@ -270,6 +342,7 @@ impl eframe::App for MyApp {
                 .id_source("table scroll")
                 .min_scrolled_height(0.0)
                 .show(ui, |ui| {
+                    ui.set_enabled(!self.import_opened);
                     self.draw_table(ui, ctx);
                 });
         });
@@ -288,6 +361,7 @@ impl MyApp {
                         torrent: backup.torrent.clone(),
                         pieces_done: backup.pieces_done as u32,
                     });
+                    log!(LogLevel::Info, "done: {}", backup.pieces_done);
                     if let DownloadStatus::Downloading = backup.status {
                         self.start_download(TorrentInfo::Backup(backup), true, ctx);
                     }
@@ -295,7 +369,7 @@ impl MyApp {
             }
             Err(e) => log!(LogLevel::Error, "Failed to open backup file: {e}"),
         }
-        let ctx = ctx.clone(); 
+        let ctx = ctx.clone();
         tokio::spawn(async move {
             loop {
                 ctx.request_repaint();
@@ -325,7 +399,7 @@ impl MyApp {
             .striped(true)
             .resizable(true)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::initial(100.0).clip(true))
+            .column(Column::auto().clip(true))
             .column(Column::auto())
             .column(Column::auto())
             .column(Column::initial(100.0).at_least(40.0).clip(true))
@@ -438,6 +512,7 @@ impl MyApp {
                                 let backup = backup::load_backup(
                                     &self.torrents[row_index].torrent.info_hash,
                                 );
+                                log!(LogLevel::Info, "{:?}", backup);
                                 match backup {
                                     Ok(backup) => {
                                         self.start_download(TorrentInfo::Backup(backup), true, ctx);
@@ -447,7 +522,7 @@ impl MyApp {
                                             TorrentInfo::Torrent(
                                                 self.torrents[row_index].torrent.clone(),
                                             ),
-                                            false,
+                                            true,
                                             ctx,
                                         );
                                     }
@@ -468,11 +543,13 @@ impl MyApp {
                                 .clicked()
                             {
                                 if let Some(ref info) = self.torrents[row_index].worker_info {
+                                    log!(LogLevel::Info, "Sended msg!!!");
                                     info.sender
                                         .send(UiMsg::Pause(
                                             self.torrents[row_index].pieces_done as u16,
                                         ))
                                         .unwrap();
+                                    log!(LogLevel::Info, "Finished: sended msg!!!");
                                     self.torrents[row_index].status = DownloadStatus::Paused;
                                 }
                                 ui.close_menu();

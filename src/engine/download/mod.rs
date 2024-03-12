@@ -6,10 +6,10 @@ use std::time::Duration;
 
 use tokio::sync::mpsc::Sender;
 
-use crate::logger::{LogLevel, log};
 use super::peers::{Peer, PeerMessage, PeerStatus};
 use super::torrent::Torrent;
 use super::DownloadEvents;
+use crate::logger::{log, LogLevel};
 pub use tasks::{ChunksTask, PieceTask};
 
 #[derive(Debug)]
@@ -42,13 +42,17 @@ impl DownloadReq {
             if let Err(e) = self.peer.connect(&self.torrent).await {
                 match e.downcast_ref::<std::io::Error>() {
                     Some(e) => {
-                        if let ErrorKind::BrokenPipe | ErrorKind::NotConnected = e.kind() {
+                        if let ErrorKind::BrokenPipe
+                        | ErrorKind::NotConnected
+                        | ErrorKind::UnexpectedEof
+                        | ErrorKind::ConnectionRefused
+                        | ErrorKind::ConnectionReset = e.kind()
+                        {
                             self.peer
                                 .reconnect(&self.torrent, Duration::from_secs(2))
                                 .await?;
                             log!(LogLevel::Debug, "Reconnected to peer");
                         } else {
-                            
                             error_sender
                                 .send(DownloadEvents::PeerAdd(self.peer))
                                 .await?;
@@ -61,19 +65,18 @@ impl DownloadReq {
                             Some(_) => {
                                 log!(LogLevel::Debug, "Delay eror");
                                 anyhow::bail!("Peer: {} is removed", self.peer.peer_addr);
-                            },
+                            }
                             None => {
                                 if e.to_string() != "Failed to unchoke peer" {
                                     error_sender
-                                    .send(DownloadEvents::PeerAdd(self.peer))
-                                    .await?;
+                                        .send(DownloadEvents::PeerAdd(self.peer))
+                                        .await?;
                                     anyhow::bail!("Unknown peer error: {}", e);
                                 } else {
                                     anyhow::bail!("Peer: {} is removed", self.peer.peer_addr);
                                 }
                             }
                         };
-                        
                     }
                 }
             };
@@ -93,7 +96,7 @@ impl DownloadReq {
                             * self.torrent.info.piece_length
                         - i as u64 * super::CHUNK_SIZE
                 } else {
-                    self.torrent.info.piece_length - i as u64  * super::CHUNK_SIZE
+                    self.torrent.info.piece_length - i as u64 * super::CHUNK_SIZE
                 }
             } else {
                 super::CHUNK_SIZE
@@ -144,7 +147,7 @@ impl DownloadReq {
             .wait_for_msg(
                 &PeerMessage::Piece(Vec::new()),
                 (self.task.chunks.end - self.task.chunks.start) as u32,
-                Some(Duration::from_secs(60)),
+                Some(Duration::from_secs(10)),
             )
             .await
         {
@@ -156,10 +159,11 @@ impl DownloadReq {
             );
             if let Some(e) = e.downcast_ref::<std::io::Error>() {
                 log!(LogLevel::Debug, "error:kind : {}", e.kind());
-                if let ErrorKind::ConnectionRefused
-                | ErrorKind::ConnectionReset
+                if let ErrorKind::BrokenPipe
                 | ErrorKind::NotConnected
-                | ErrorKind::UnexpectedEof = e.kind()
+                | ErrorKind::UnexpectedEof
+                | ErrorKind::ConnectionRefused
+                | ErrorKind::ConnectionReset = e.kind()
                 {
                     self.peer
                         .reconnect(&self.torrent, Duration::from_secs(2))

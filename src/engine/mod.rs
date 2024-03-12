@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 
 use download::tasks::{ChunksTask, PieceTask, MAX_CHUNKS_TASKS};
 use download::DownloadReq;
@@ -126,6 +126,7 @@ pub async fn download_torrent(
                 &mut chunks_tasks,
                 MAX_CHUNKS_TASKS - 1,
             );
+            log!(LogLevel::Debug, "\n{:?}\n{:?}", pieces_tasks, chunks_tasks);
         }
         TorrentInfo::Backup(ref info) => {
             pieces_tasks = info.pieces_tasks.clone();
@@ -140,7 +141,7 @@ pub async fn download_torrent(
             }
         }
     }
-
+    let saver_cancel = CancellationToken::new();
     let saver_task = saver::spawn_saver(
         save_path.to_string(),
         torrent.clone(),
@@ -153,6 +154,7 @@ pub async fn download_torrent(
         } else {
             None
         },
+        saver_cancel.clone()
     );
 
     if pieces_tasks.is_empty() && chunks_tasks.is_empty() {
@@ -164,7 +166,6 @@ pub async fn download_torrent(
     let mut wait_for_channel_msg = false;
     let mut ui_reader = ui_handle.ui_sender.subscribe();
     loop {
-
         // checking that saver task is alive
         if saver_task.is_finished() {
             if let Ok(res) = saver_task.await {
@@ -178,18 +179,14 @@ pub async fn download_torrent(
         let download_status = if wait_for_channel_msg {
             let output;
             tokio::select! {
-                res = timeout(Duration::from_secs(20), get_status.recv()) => {
-                    match res {
-                        Err(_) => {
-                            tracker_resp
-                                .clone()
-                                .find_working_peers(send_data.clone(), send_status.clone());
-                            continue;
-                        }
-                        Ok(value) => {
-                            output = value;
-                        },
-                    }
+                _ = tokio::time::sleep(Duration::from_secs(20)) => {
+                    tracker_resp
+                        .clone()
+                        .find_working_peers(send_data.clone(), send_status.clone());
+                    continue;
+                }
+                res = get_status.recv() => {
+                    output = res;
                 }
                 msg @ Ok(UiMsg::ForceOff | UiMsg::Pause(_) | UiMsg::Stop(_)) = ui_reader.recv() => {
                     let msg = msg.unwrap();
@@ -199,6 +196,7 @@ pub async fn download_torrent(
                             task
                         }) = peer
                         {
+                            log!(LogLevel::Fatal, "Returned chunk task: {:?}", task);
                             chunks_tasks.push_front(task);
                             handle.abort();
                         }
@@ -226,6 +224,9 @@ pub async fn download_torrent(
                         },
                         _ => {}
                     }
+                    saver_cancel.cancel();
+                    let _ = saver_task.await;
+                    log!(LogLevel::Info, "Saver finished");
                     break;
                 }
             }
@@ -248,7 +249,18 @@ pub async fn download_torrent(
                         break;
                     }
                     ref msg @ UiMsg::Stop(done) | ref msg @ UiMsg::Pause(done) => {
-                        log!(LogLevel::Debug, "Gor pause msg, shutting down..");
+                        for peer in peers {
+                            if let DownloaderPeer::Busy(DownloaderInfo {
+                                handle: Some(handle),
+                                task,
+                            }) = peer
+                            {
+                                log!(LogLevel::Fatal, "Returned chunk 22 task: {:?}", task);
+                                chunks_tasks.push_front(task);
+                                log!(LogLevel::Fatal, "{:?}", handle);
+                                handle.abort();
+                            }
+                        }
                         backup::backup_torrent(TorrentBackupInfo {
                             pieces_tasks,
                             chunks_tasks,
@@ -261,6 +273,9 @@ pub async fn download_torrent(
                                 crate::DownloadStatus::Downloading
                             },
                         })?;
+                        saver_cancel.cancel();
+                        let _ = saver_task.await;
+                        log!(LogLevel::Info, "Saver is gone");
                         break;
                     }
                     _ => {}
@@ -275,7 +290,10 @@ pub async fn download_torrent(
         };
         if let Some(download_status) = download_status {
             match download_status {
-                DownloadEvents::Finished => break,
+                DownloadEvents::Finished => {
+                    ui_handle.send_with_update(UiMsg::TorrentFinished).unwrap();
+                    break;
+                }
                 DownloadEvents::InvalidHash(piece_i) => {
                     let total_chunks =
                         (torrent.info.piece_length as f64 / CHUNK_SIZE as f64).ceil() as u64;

@@ -3732,6 +3732,7 @@ dependencies = [
  "serde_urlencoded",
  "sha1",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
