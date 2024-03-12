@@ -89,7 +89,7 @@ struct MyApp {
     pieces: Vec<u16>,
     import_opened: bool,
     import_dest_dir: String,
-    import_torrent: Option<Torrent>
+    import_torrent: Option<Torrent>,
 }
 
 #[tokio::main]
@@ -119,7 +119,7 @@ impl Default for MyApp {
             pieces: Vec::new(),
             import_opened: false,
             import_dest_dir: String::new(),
-            import_torrent: None
+            import_torrent: None,
         }
     }
 }
@@ -253,7 +253,11 @@ impl eframe::App for MyApp {
                         ui.set_enabled(button_enabled);
                         if ui.button("Start").clicked() {
                             self.import_opened = false;
-                            self.start_download(TorrentInfo::Torrent(self.import_torrent.as_ref().unwrap().clone()), false, ctx);
+                            self.start_download(
+                                TorrentInfo::Torrent(self.import_torrent.as_ref().unwrap().clone()),
+                                false,
+                                ctx,
+                            );
                         }
                     });
                 },
@@ -301,10 +305,11 @@ impl eframe::App for MyApp {
                                 let torrent = parse_torrent(path.to_str().unwrap());
                                 if let Ok(torrent) = torrent {
                                     if self
-                                    .torrents
-                                    .iter()
-                                    .position(|x| x.torrent.info_hash == torrent.info_hash)
-                                    .is_none() {
+                                        .torrents
+                                        .iter()
+                                        .position(|x| x.torrent.info_hash == torrent.info_hash)
+                                        .is_none()
+                                    {
                                         self.import_torrent = Some(torrent);
                                         self.import_opened = true;
                                     } else {
@@ -320,6 +325,47 @@ impl eframe::App for MyApp {
                     });
                     ui.menu_button("Edit", |ui| {});
                     ui.button("Settigns");
+                });
+
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.set_enabled(self.selected_row.is_some());
+                        if ui.button("Pause").clicked() {
+                            self.pause_torrent(self.selected_row.unwrap());
+                        }
+                        if ui.button("Resume").clicked() {
+                            self.resume_torrent(self.selected_row.unwrap(), ctx);
+                        }
+                        if ui.button("Delete").clicked() {
+                            self.delete_torrent(self.selected_row.unwrap());
+                        }
+                    });
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("Pause All").clicked() {
+                            let mut torrents_to_pause = Vec::new();
+                            for (i, entry) in self.torrents.iter().enumerate() {
+                                if let DownloadStatus::Downloading = entry.status {
+                                    torrents_to_pause.push(i);
+                                }
+                            }
+                            for torrent_i in torrents_to_pause {
+                                self.pause_torrent(torrent_i);
+                            }
+                        };
+                        if ui.button("Resume All").clicked() {
+                            let mut torrents_to_resume = Vec::new();
+                            for (i, entry) in self.torrents.iter().enumerate() {
+                                if let DownloadStatus::Paused = entry.status {
+                                    torrents_to_resume.push(i);
+                                }
+                            }
+                            for torrent_i in torrents_to_resume {
+                                self.resume_torrent(torrent_i, ctx);
+                            }
+                        };
+                    });
                 });
             });
 
@@ -394,6 +440,44 @@ impl MyApp {
                 });
             });
     }
+
+    fn pause_torrent(&mut self, i: usize) {
+        if let Some(ref info) = self.torrents[i].worker_info {
+            log!(LogLevel::Info, "Sended msg!!!");
+            info.sender
+                .send(UiMsg::Pause(self.torrents[i].pieces_done as u16))
+                .unwrap();
+            log!(LogLevel::Info, "Finished: sended msg!!!");
+            self.torrents[i].status = DownloadStatus::Paused;
+        }
+    }
+
+    fn resume_torrent(&mut self, i: usize, ctx: &egui::Context) {
+        let backup = backup::load_backup(&self.torrents[i].torrent.info_hash);
+        log!(LogLevel::Info, "{:?}", backup);
+        match backup {
+            Ok(backup) => {
+                self.start_download(TorrentInfo::Backup(backup), true, ctx);
+            }
+            Err(_) => {
+                self.start_download(
+                    TorrentInfo::Torrent(self.torrents[i].torrent.clone()),
+                    true,
+                    ctx,
+                );
+            }
+        }
+        self.torrents[i].status = DownloadStatus::Downloading;
+    }
+
+    fn delete_torrent(&mut self, i: usize) {
+        if let Some(ref info) = self.torrents[i].worker_info {
+            info.sender.send(UiMsg::ForceOff).unwrap();
+        }
+        backup::remove_torrent(&self.torrents[i].torrent.info_hash).unwrap();
+        self.torrents.remove(i);
+    }
+
     fn draw_table(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         let mut table = TableBuilder::new(ui)
             .striped(true)
@@ -509,25 +593,7 @@ impl MyApp {
                                 .add_enabled(enabled, egui::Button::new("Resume"))
                                 .clicked()
                             {
-                                let backup = backup::load_backup(
-                                    &self.torrents[row_index].torrent.info_hash,
-                                );
-                                log!(LogLevel::Info, "{:?}", backup);
-                                match backup {
-                                    Ok(backup) => {
-                                        self.start_download(TorrentInfo::Backup(backup), true, ctx);
-                                    }
-                                    Err(_) => {
-                                        self.start_download(
-                                            TorrentInfo::Torrent(
-                                                self.torrents[row_index].torrent.clone(),
-                                            ),
-                                            true,
-                                            ctx,
-                                        );
-                                    }
-                                }
-                                self.torrents[row_index].status = DownloadStatus::Downloading;
+                                self.resume_torrent(row_index, ctx);
                                 ui.close_menu();
                             };
 
@@ -542,26 +608,12 @@ impl MyApp {
                                 .add_enabled(enabled, egui::Button::new("Pause"))
                                 .clicked()
                             {
-                                if let Some(ref info) = self.torrents[row_index].worker_info {
-                                    log!(LogLevel::Info, "Sended msg!!!");
-                                    info.sender
-                                        .send(UiMsg::Pause(
-                                            self.torrents[row_index].pieces_done as u16,
-                                        ))
-                                        .unwrap();
-                                    log!(LogLevel::Info, "Finished: sended msg!!!");
-                                    self.torrents[row_index].status = DownloadStatus::Paused;
-                                }
+                                self.pause_torrent(row_index);
                                 ui.close_menu();
                             };
 
                             if ui.button("Delete").clicked() {
-                                if let Some(ref info) = self.torrents[row_index].worker_info {
-                                    info.sender.send(UiMsg::ForceOff).unwrap();
-                                }
-                                backup::remove_torrent(&self.torrents[row_index].torrent.info_hash)
-                                    .unwrap();
-                                self.torrents.remove(row_index);
+                                self.delete_torrent(row_index);
                                 ui.close_menu();
                             };
                         });
