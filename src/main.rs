@@ -503,10 +503,10 @@ impl MyApp {
                     ui.strong("Progress");
                 });
                 header.col(|ui| {
-                    ui.strong("Clipped text");
+                    ui.strong("Downloaded");
                 });
                 header.col(|ui| {
-                    ui.strong("Content");
+                    ui.strong("Uploaded");
                 });
             })
             .body(|body| {
@@ -521,17 +521,9 @@ impl MyApp {
                             ui.label(&self.torrents[row_index].torrent.info.name);
                         });
                         row.col(|ui| {
-                            let postfixed_size = {
-                                let size = self.torrents[row_index].torrent.info.length;
-                                match size {
-                                    0..=999 => format!("{size}B"),
-                                    1000..=999_999 => format!("{:.2}B", size / 1000),
-                                    1000_000..=999_999_999 => format!("{:.2}MB", size / 1000_000),
-                                    _ => {
-                                        format!("{:.2}GB", size / 1000_000_000)
-                                    }
-                                }
-                            };
+                            let postfixed_size = get_readable_size(
+                                self.torrents[row_index].torrent.info.length as usize,
+                            );
                             ui.label(postfixed_size);
                         });
                         row.col(|ui| {
@@ -568,15 +560,13 @@ impl MyApp {
                             ui.add(progress_bar);
                         });
                         row.col(|ui| {
-                            ui.label(format!(
-                                "{:.3}",
-                                self.torrents[row_index].pieces_done as f32
-                                    / self.torrents[row_index].torrent.info.piece_hashes.len()
-                                        as f32
-                            ));
+                            let size = get_readable_size(
+                                self.torrents[row_index].pieces_done as usize * self.torrents[row_index].torrent.info.piece_length as usize,
+                            );
+                            ui.label(size);
                         });
                         row.col(|ui| {
-                            ui.label(row_index.to_string());
+                            ui.label("0");
                         });
                         row.response().context_menu(|ui| {
                             // self.context_selected_row = Some(row_index);
@@ -631,5 +621,14 @@ impl MyApp {
                     })
                 };
             });
+    }
+}
+
+fn get_readable_size(bytes: usize) -> String {
+    match bytes {
+        0..=1023 => format!("{bytes}B"),
+        1024..=1_048_575 => format!("{:.2}KB", bytes as f64 / 1024.0),
+        1_048_576..=1_073_741_823 => format!("{:.2}MB", bytes as f64 / 1_048_576.0),
+        _ => format!("{:.2}GB", bytes as f64 / 1_073_741_824.0),
     }
 }
