@@ -4,6 +4,7 @@ mod bottom_panel;
 mod central_panel;
 mod torrent_import;
 mod torrent_actions;
+mod files_tree;
 
 use crate::engine::backup;
 use crate::engine::TorrentInfo;
@@ -118,7 +119,26 @@ impl Default for MyApp {
 }
 
 impl eframe::App for MyApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        
+        if !self.inited {
+            self.init(ctx);
+        }
+        if self.import_opened {
+            self.import_window(ctx);            
+        }
+
+        self.torrent_updates();
+
+        self.show_message(ctx);
+        
+        self.top_panel(ctx);
+        self.bottom_panel(ctx);
+        self.cenral_panel(ctx);
+        
+    }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+
         for q_torrent in &self.torrents {
             match q_torrent.status {
                 DownloadStatus::Downloading => {
@@ -144,24 +164,6 @@ impl eframe::App for MyApp {
                 }
             }
         }
-    }
-
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        
-        if !self.inited {
-            self.init(ctx);
-        }
-        if self.import_opened {
-            self.import_window(ctx);            
-        }
-
-        self.torrent_updates();
-
-        self.show_message(ctx);
-        self.top_panel(ctx);
-        self.bottom_panel(ctx);
-        self.cenral_panel(ctx);
-        
     }
 }
 
