@@ -1,5 +1,5 @@
 use crate::engine::logger::{log, LogLevel};
-use crate::TorrentBackupInfo;
+use crate::gui::TorrentBackupInfo;
 use dirs::data_local_dir;
 use std::fs::File;
 use std::io::{Read, Seek, Write};

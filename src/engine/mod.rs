@@ -1,5 +1,4 @@
-use crate::backup;
-use crate::{TorrentBackupInfo, UiHandle, UiMsg};
+use crate::gui::{TorrentBackupInfo, UiHandle, UiMsg, DownloadStatus};
 use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Arc;
@@ -25,6 +24,7 @@ mod peers;
 mod saver;
 pub mod torrent;
 mod tracker;
+pub mod backup;
 
 enum DownloadEvents {
     ChunksFail(ChunksTask),
@@ -67,7 +67,11 @@ pub async fn download_torrent(
     ui_handle: UiHandle,
 ) -> anyhow::Result<()> {
     let torrent = match torrent_info {
-        TorrentInfo::Torrent(ref torrent) => torrent.clone(),
+        TorrentInfo::Torrent(ref torrent) => {
+            let pathes = torrent.info.files.as_ref().unwrap().iter().map(|x| x.path.clone()).collect::<Vec<String>>();    
+            println!("{:?}", pathes);
+            torrent.clone()
+        },
         TorrentInfo::Backup(ref backup) => backup.torrent.clone(),
     };
 
@@ -217,9 +221,9 @@ pub async fn download_torrent(
                                     save_path: save_path.to_string(),
                                     pieces_done: done as usize,
                                     status: if let UiMsg::Pause(_) = msg {
-                                        crate::DownloadStatus::Paused
+                                        DownloadStatus::Paused
                                     } else {
-                                        crate::DownloadStatus::Downloading
+                                        DownloadStatus::Downloading
                                     }
                                 },
                             )?
@@ -270,9 +274,9 @@ pub async fn download_torrent(
                             save_path: save_path.to_string(),
                             pieces_done: done as usize,
                             status: if let UiMsg::Pause(_) = msg {
-                                crate::DownloadStatus::Paused
+                                DownloadStatus::Paused
                             } else {
-                                crate::DownloadStatus::Downloading
+                                DownloadStatus::Downloading
                             },
                         })?;
                         saver_cancel.cancel();

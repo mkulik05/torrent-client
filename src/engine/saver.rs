@@ -13,8 +13,8 @@ use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
-use crate::TorrentBackupInfo;
-use crate::{UiHandle, UiMsg};
+use crate::gui::TorrentBackupInfo;
+use crate::gui::{UiHandle, UiMsg};
 
 use super::download::tasks::CHUNK_SIZE;
 use super::download::DataPiece;

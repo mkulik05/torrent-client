@@ -39,8 +39,15 @@ impl Logger {
         LOGGER_INSTANCE.get().expect("logger is not initialized")
     }
 
-    pub fn init(path: String) -> Result<(), anyhow::Error> {
-        println!("{}", path);
+    pub fn init() -> Result<(), anyhow::Error> {
+        let path = std::env::temp_dir();
+        let path = path
+            .join(format!("log{}.txt", chrono::Local::now().format("%d-%m-%Y_%H-%M-%S")))
+            .to_str()
+            .unwrap()
+            .to_owned();
+
+        println!("Log path: {}", path);
         LOGGER_INSTANCE
             .set(Logger { log_path: path })
             .expect("Failed to initialise logger");
