@@ -24,8 +24,34 @@ use tokio::{
 };
 
 pub fn start_gui() -> anyhow::Result<()> {
+    let icon = include_bytes!("../../folder-download.png");
+    let image = image::load_from_memory(icon).expect("Failuse tray_item::{TrayItem, IconSource};
+
+    fn main() {
+        gtk::init().unwrap();
+    
+        let mut tray = TrayItem::new("Torrent client", IconSource::Resource("folder-download")).unwrap();
+    
+        // tray.add_label("Tray Label").unwrap();
+    
+        tray.add_menu_item("Hello", || {
+            println!("Hello!");
+        }).unwrap();
+    
+        tray.add_menu_item("Quit", || {
+            gtk::main_quit();
+        }).unwrap();
+    
+        gtk::main();
+    }ed to open icon path").to_rgba8();
+    let (icon_width, icon_height) = image.dimensions();
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 750.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 750.0]).with_icon(
+            egui::IconData { 
+                rgba: image.into_raw(), 
+                width: icon_width, 
+                height: icon_height,
+        }),
         ..Default::default()
     };
     eframe::run_native("MkTorrent", options, Box::new(|_| Box::<MyApp>::default())).unwrap();
@@ -89,6 +115,7 @@ struct TorrentDownload {
     worker_info: Option<WorkerInfo>,
     torrent: Torrent,
     pieces_done: u32,
+    save_dir: String
 }
 
 pub struct MyApp {
@@ -178,6 +205,7 @@ impl MyApp {
                         worker_info: None,
                         torrent: backup.torrent.clone(),
                         pieces_done: backup.pieces_done as u32,
+                        save_dir: backup.save_path.clone()
                     });
                     log!(LogLevel::Info, "done: {}", backup.pieces_done);
                     if let DownloadStatus::Downloading = backup.status {
@@ -214,11 +242,11 @@ impl MyApp {
     }
 }
 
-fn get_readable_size(bytes: usize) -> String {
+fn get_readable_size(bytes: usize, prec: usize) -> String {
     match bytes {
         0..=1023 => format!("{bytes}B"),
-        1024..=1_048_575 => format!("{:.2}KB", bytes as f64 / 1024.0),
-        1_048_576..=1_073_741_823 => format!("{:.2}MB", bytes as f64 / 1_048_576.0),
-        _ => format!("{:.2}GB", bytes as f64 / 1_073_741_824.0),
+        1024..=1_048_575 => format!("{:.1$}KB", bytes as f64 / 1024.0, prec),
+        1_048_576..=1_073_741_823 => format!("{:.1$}MB", bytes as f64 / 1_048_576.0, prec),
+        _ => format!("{:.1$}GB", bytes as f64 / 1_073_741_824.0, prec),
     }
 }

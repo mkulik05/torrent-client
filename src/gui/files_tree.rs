@@ -54,7 +54,7 @@ impl Tree {
 }
 
 pub fn draw_tree(pathes: &Vec<&str>, root_name: String, ui: &mut Ui) {
-    let tree = Tree::build_tree(pathes.to_vec());
+    let tree: Tree = Tree::build_tree(pathes.to_vec());
     let mut tree = Tree {
         children: vec![(tree, root_name)],
         end_nodes: Vec::new()

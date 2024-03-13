@@ -72,13 +72,14 @@ impl MyApp {
                                     ui.label(format!(
                                         "Required space: {}",
                                         get_readable_size(
-                                            self.import_torrent.as_ref().unwrap().info.length as usize
+                                            self.import_torrent.as_ref().unwrap().info.length as usize,
+                                            2
                                         )
                                     ));
                                     let mut available_size = String::from("0");
                                     if dest_path.exists() {
                                         if let Ok(space) = fs2::available_space(dest_path) {
-                                            available_size = get_readable_size(space as usize);
+                                            available_size = get_readable_size(space as usize, 2);
                                         }
                                     }
                                     ui.label(format!("Available space: {}", available_size));

@@ -16,15 +16,16 @@ impl MyApp {
         };
 
         let (sender, receiver) = broadcast::channel(20_000);
+        let folder = if let TorrentInfo::Backup(ref backup) = torrent_info {
+            backup.save_path.clone()
+        } else {
+            self.import_dest_dir.clone()
+        };
         let handle = {
+            let folder = folder.clone();
             let name = torrent.info.name.clone();
             let sender = sender.clone();
             let ctx = ctx.clone();
-            let folder = if let TorrentInfo::Backup(ref backup) = torrent_info {
-                backup.save_path.clone()
-            } else {
-                self.import_dest_dir.clone()
-            };
             tokio::spawn(async move {
                 log!(LogLevel::Info, "Strating torrent downloading: {name}");
                 download_torrent(
@@ -56,6 +57,7 @@ impl MyApp {
                 status: DownloadStatus::Downloading,
                 worker_info: Some(info),
                 pieces_done: 0,
+                save_dir: folder
             });
         } else {
             self.torrents[torrent_i.unwrap()].worker_info = Some(info);
