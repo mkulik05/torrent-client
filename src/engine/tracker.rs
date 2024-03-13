@@ -8,7 +8,7 @@ use tokio::task::JoinHandle;
 
 use super::bencode::BencodeValue;
 use super::download::DataPiece;
-use super::logger::{LogLevel, log};
+use super::logger::{log, LogLevel};
 use super::peers::Peer;
 use super::torrent::Torrent;
 use super::DownloadEvents;
@@ -93,25 +93,27 @@ impl TrackerReq {
 }
 
 impl TrackerResp {
-    // Discover task - found working peers, sep task to immediately
-    // start working with discovered peers
+    // Discover task - found working peers, sep task for each peer check
     pub fn find_working_peers(
         self: Arc<Self>,
         send_data: Sender<DataPiece>,
         send_status: Sender<DownloadEvents>,
-    ) -> JoinHandle<()> {
-        tokio::spawn(async move {
-            let mut n = 0;
-            for peer in self.peers.iter() {
-                if let Ok(peer) = Peer::new(peer, send_data.clone(), Duration::from_secs(2)).await {
-                    n += 1;
+    ) -> Vec<JoinHandle<()>> {
+        let mut handles = Vec::new();
+        for peer in self.peers.clone() {
+            let send_data = send_data.clone();
+            let send_status = send_status.clone();
+            let handle = tokio::spawn(async move {
+                if let Ok(peer) = Peer::new(&peer, send_data.clone(), Duration::from_secs(2)).await
+                {
                     send_status
                         .send(DownloadEvents::PeerAdd(peer))
                         .await
                         .unwrap();
                 }
-            }
-            log!(LogLevel::Info, "Connected to {} peer(s)", n);
-        })
+            });
+            handles.push(handle);
+        }
+        handles
     }
 }

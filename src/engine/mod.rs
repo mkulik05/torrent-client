@@ -98,7 +98,7 @@ pub async fn download_torrent(
     let mut peers: Vec<DownloaderPeer> = Vec::new();
 
     // tokio task spawns inside
-    let peer_discovery_handle = tracker_resp
+    let peer_discovery_handles = tracker_resp
         .clone()
         .find_working_peers(send_data.clone(), send_status.clone());
 
@@ -159,7 +159,9 @@ pub async fn download_torrent(
 
     if pieces_tasks.is_empty() && chunks_tasks.is_empty() {
         log!(LogLevel::Info, "Done");
-        peer_discovery_handle.abort();
+        for handle in peer_discovery_handles {
+            handle.abort();
+        }
         return Ok(());
     }
 
@@ -416,7 +418,8 @@ pub async fn download_torrent(
             continue;
         }
     }
-    peer_discovery_handle.abort();
-
+    for handle in peer_discovery_handles {
+        handle.abort();
+    }
     Ok(())
 }
