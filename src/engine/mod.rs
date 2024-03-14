@@ -186,6 +186,7 @@ pub async fn download_torrent(
             let output;
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(20)) => {
+                    log!(LogLevel::Info, "Started peer search");
                     tracker_resp
                         .clone()
                         .find_working_peers(send_data.clone(), send_status.clone());

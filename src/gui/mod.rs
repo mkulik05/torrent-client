@@ -14,6 +14,7 @@ use crate::engine::{
     torrent::Torrent,
 };
 use eframe::egui;
+use tokio::task;
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -37,8 +38,6 @@ pub fn start_gui() -> anyhow::Result<()> {
         ..Default::default()
     };
     eframe::run_native("MkTorrent", options, Box::new(|_| Box::<MyApp>::default())).unwrap();
-
-    std::thread::sleep(Duration::from_secs(5));
     Ok(())
 }
 
@@ -173,6 +172,19 @@ impl eframe::App for MyApp {
                 }
             }
         }
+
+        let app_data = std::mem::take(self); 
+        for q_torrent in app_data.torrents {
+            match q_torrent.status {
+                DownloadStatus::Downloading => {
+                    if let Some(info) = q_torrent.worker_info {
+                        async_std::task::block_on(info.handle).unwrap();
+                    }
+                }, 
+                _ => {}
+            }
+        }
+        println!("Done");
     }
 }
 
