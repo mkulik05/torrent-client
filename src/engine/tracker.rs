@@ -5,6 +5,7 @@ use std::time::Duration;
 use rand::distributions::{Alphanumeric, DistString};
 use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
+use tokio::time::timeout;
 
 use super::bencode::BencodeValue;
 use super::download::DataPiece;
@@ -44,7 +45,7 @@ impl TrackerReq {
             compact: 1,
         }
     }
-    pub async fn send(&self, torrent: &Torrent) -> anyhow::Result<TrackerResp> {
+    pub async fn send(&self, tracker_url: &String) -> anyhow::Result<TrackerResp> {
         let params = &[
             ("peer_id", self.peer_id.clone()),
             ("port", self.port.to_string()),
@@ -57,38 +58,46 @@ impl TrackerReq {
         let client = reqwest::Client::builder()
             .user_agent("my torrent")
             .build()?;
-        let body = client
-            .get(format!(
-                "{}?info_hash={}",
-                torrent.tracker_url, self.info_hash
-            ))
-            .query(params)
-            .send()
-            .await?
-            .bytes()
-            .await?;
-        let response = BencodeValue::decode_bencoded_value(&body)?.0;
-        let BencodeValue::Bytes(ref peers_bytes) = response["peers"] else {
-            anyhow::bail!("Invalid torrent response structure");
-        };
-        let BencodeValue::Num(interval) = response["interval"] else {
-            anyhow::bail!("Invalid torrent response structure");
-        };
-        log!(LogLevel::Debug, "Got valid response");
-        let peers_n = peers_bytes.len() / 6;
-        log!(LogLevel::Debug, "Found {peers_n} peer(s)");
-        let mut peers = Vec::new();
-        for i in 0..peers_n {
-            peers.push(format!(
-                "{}.{}.{}.{}:{}",
-                peers_bytes[i * 6],
-                peers_bytes[i * 6 + 1],
-                peers_bytes[i * 6 + 2],
-                peers_bytes[i * 6 + 3],
-                u16::from_be_bytes([peers_bytes[i * 6 + 4], peers_bytes[i * 6 + 5]])
-            ))
+
+        let res = timeout(
+            Duration::from_secs(2),
+            client
+                .get(format!("{}?info_hash={}", tracker_url, self.info_hash))
+                .query(params)
+                .send(),
+        )
+        .await;
+
+        match res {
+            Err(_) => {
+                anyhow::bail!("Timeout error")
+            }
+            Ok(res) => {
+                let body = res?.bytes().await?;
+                let response = BencodeValue::decode_bencoded_value(&body)?.0;
+                let BencodeValue::Bytes(ref peers_bytes) = response["peers"] else {
+                    anyhow::bail!("Invalid torrent response structure");
+                };
+                let BencodeValue::Num(interval) = response["interval"] else {
+                    anyhow::bail!("Invalid torrent response structure");
+                };
+                log!(LogLevel::Debug, "Got valid response");
+                let peers_n = peers_bytes.len() / 6;
+                log!(LogLevel::Debug, "Found {peers_n} peer(s)");
+                let mut peers = Vec::new();
+                for i in 0..peers_n {
+                    peers.push(format!(
+                        "{}.{}.{}.{}:{}",
+                        peers_bytes[i * 6],
+                        peers_bytes[i * 6 + 1],
+                        peers_bytes[i * 6 + 2],
+                        peers_bytes[i * 6 + 3],
+                        u16::from_be_bytes([peers_bytes[i * 6 + 4], peers_bytes[i * 6 + 5]])
+                    ))
+                }
+                Ok(TrackerResp { interval, peers })
+            }
         }
-        Ok(TrackerResp { interval, peers })
     }
 }
 

@@ -28,16 +28,19 @@ impl MyApp {
             let ctx = ctx.clone();
             tokio::spawn(async move {
                 log!(LogLevel::Info, "Strating torrent downloading: {name}");
-                download_torrent(
+                let ui_handle = UiHandle {
+                    ui_sender: sender,
+                    ctx,
+                };
+                if let Err(e) = download_torrent(
                     torrent_info,
                     &folder,
-                    UiHandle {
-                        ui_sender: sender,
-                        ctx,
-                    },
+                    ui_handle.clone(),
                 )
-                .await
-                .unwrap();
+                .await {
+                    log!(LogLevel::Fatal, "Failed to download torrent: {e}");
+                    ui_handle.send_with_update(UiMsg::TorrentErr(e.to_string())).unwrap();
+                }
                 log!(LogLevel::Info, "{} download finished", name);
             })
         };
@@ -99,7 +102,7 @@ impl MyApp {
         self.torrents.remove(i);
     }
     pub fn torrent_updates(&mut self) {
-        for torrent in &mut self.torrents {
+        for (i, torrent) in self.torrents.iter_mut().enumerate() {
             if torrent.worker_info.is_none() {
                 continue;
             }
@@ -117,7 +120,10 @@ impl MyApp {
                         UiMsg::TorrentFinished => {
                             torrent.status = DownloadStatus::Finished;
                             torrent.pieces_done = torrent.torrent.info.piece_hashes.len() as u32;
-                        }
+                        },
+                        UiMsg::TorrentErr(msg) => {
+                            torrent.status = DownloadStatus::Error(msg)
+                        },
                         _ => {}
                     }
                 }

@@ -1,7 +1,7 @@
-use egui_extras::{Column, TableBuilder};
-use crate::gui::{DownloadStatus, MyApp, get_readable_size};
-use egui::Color32;
+use crate::gui::{get_readable_size, DownloadStatus, MyApp};
 use eframe::egui::Ui;
+use egui::Color32;
+use egui_extras::{Column, TableBuilder};
 impl MyApp {
     pub fn draw_table(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         let mut table = TableBuilder::new(ui)
@@ -47,7 +47,8 @@ impl MyApp {
                         });
                         row.col(|ui| {
                             let postfixed_size = get_readable_size(
-                                self.torrents[row_index].torrent.info.length as usize, 2
+                                self.torrents[row_index].torrent.info.length as usize,
+                                2,
                             );
                             ui.label(postfixed_size);
                         });
@@ -68,7 +69,7 @@ impl MyApp {
                                     DownloadStatus::Finished => {
                                         egui::ProgressBar::new(1.0).fill(Color32::GREEN)
                                     }
-                                    DownloadStatus::Paused => {
+                                    _ => {
                                         let progress = self.torrents[row_index].pieces_done as f32
                                             / self.torrents[row_index]
                                                 .torrent
@@ -88,7 +89,7 @@ impl MyApp {
                             let size = get_readable_size(
                                 self.torrents[row_index].pieces_done as usize
                                     * self.torrents[row_index].torrent.info.piece_length as usize,
-                                    0
+                                0,
                             );
                             ui.label(size);
                         });
@@ -144,6 +145,9 @@ impl MyApp {
                             } else {
                                 Some(row_index)
                             }
+                        }
+                        if let DownloadStatus::Error(msg) = &self.torrents[row_index].status {
+                            row.response().on_hover_text(msg);
                         }
                     })
                 };

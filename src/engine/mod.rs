@@ -68,8 +68,6 @@ pub async fn download_torrent(
 ) -> anyhow::Result<()> {
     let torrent = match torrent_info {
         TorrentInfo::Torrent(ref torrent) => {
-            let pathes = torrent.info.files.as_ref().unwrap().iter().map(|x| x.path.clone()).collect::<Vec<String>>();    
-            println!("{:?}", pathes);
             torrent.clone()
         },
         TorrentInfo::Backup(ref backup) => backup.torrent.clone(),
@@ -95,7 +93,23 @@ pub async fn download_torrent(
 
     let save_path = save_path.to_str().unwrap();
     let tracker_req = TrackerReq::init(&torrent);
-    let tracker_resp = Arc::new(tracker_req.send(&torrent).await?);
+    let mut n = 0;
+    let max_n = if let Some(urls) = &torrent.tracker_urls {urls.len() } else { 3 };
+    let mut tracker_resp = tracker_req.send(&torrent.tracker_url).await;
+    while let Err(ref e) = tracker_resp {
+        log!(LogLevel::Error, "Tracker request failed: {e}");
+
+        if n >= max_n {
+            anyhow::bail!("Failed to connect to tracker");
+        }
+        if let Some(urls) = &torrent.tracker_urls {
+            tracker_resp = tracker_req.send(&urls[n]).await;
+        } else {
+            tracker_resp = tracker_req.send(&torrent.tracker_url).await;
+        }
+        n += 1;
+    }
+    let tracker_resp = Arc::new(tracker_resp.unwrap());
     let torrent = Arc::new(torrent);
     let (send_status, mut get_status) = mpsc::channel(270);
     let (send_data, get_data) = mpsc::channel::<DataPiece>(50);
@@ -184,6 +198,7 @@ pub async fn download_torrent(
         // if none appeared, searching for peers again
         let download_status = if wait_for_channel_msg {
             let output;
+            log!(LogLevel::Debug, "Before select");
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(20)) => {
                     log!(LogLevel::Info, "Started peer search");
@@ -355,7 +370,10 @@ pub async fn download_torrent(
             }
         }
 
-        download::tasks::add_chunks_tasks(&mut pieces_tasks, &mut chunks_tasks, 1);
+        if chunks_tasks.len() < MAX_CHUNKS_TASKS {
+            download::tasks::add_chunks_tasks(&mut pieces_tasks, &mut chunks_tasks, 1);
+        }
+        
         if !chunks_tasks.is_empty() {
             let send_status = send_status.clone();
             let some_pos = peers.iter().position(|x| {

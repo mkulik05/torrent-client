@@ -14,7 +14,6 @@ use crate::engine::{
     torrent::Torrent,
 };
 use eframe::egui;
-use tokio::task;
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -46,6 +45,7 @@ pub enum DownloadStatus {
     Downloading,
     Paused,
     Finished,
+    Error(String)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -77,6 +77,9 @@ pub enum UiMsg {
     TorrentFinished,
     PieceDone(u16),
     ForceOff,
+
+    // String with error text
+    TorrentErr(String),
 
     // Pieces downloaded in total
     Pause(u16),
@@ -169,7 +172,8 @@ impl eframe::App for MyApp {
                 }
                 DownloadStatus::Paused => {
                     // Data is already backed up
-                }
+                },
+                _ => {}
             }
         }
 

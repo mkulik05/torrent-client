@@ -17,6 +17,7 @@ pub struct TorrentFile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Torrent {
     pub tracker_url: String,
+    pub tracker_urls: Option<Vec<String>>,
     pub info: TorrentInfo,
     pub info_hash: Vec<u8>,
 }
@@ -90,8 +91,20 @@ impl Torrent {
             files,
         };
 
+        let mut tracker_urls = None;
+
+        if let BencodeValue::List(ref be_trackers) = parsed_file["announce-list"] {
+            let mut trackers = Vec::new();
+            for tracker in be_trackers {
+                log!(LogLevel::Info, "{:?}", tracker[0].to_lossy_string());
+                trackers.push(tracker[0].to_lossy_string());
+            }
+            tracker_urls = Some(trackers);
+        }
+
         Ok(Torrent {
             tracker_url: parsed_file["announce"].to_lossy_string(),
+            tracker_urls,
             info: torrent_info,
             info_hash: Torrent::bencode_hash(&parsed_file["info"])?,
         })
