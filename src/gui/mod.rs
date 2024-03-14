@@ -25,25 +25,7 @@ use tokio::{
 
 pub fn start_gui() -> anyhow::Result<()> {
     let icon = include_bytes!("../../folder-download.png");
-    let image = image::load_from_memory(icon).expect("Failuse tray_item::{TrayItem, IconSource};
-
-    fn main() {
-        gtk::init().unwrap();
-    
-        let mut tray = TrayItem::new("Torrent client", IconSource::Resource("folder-download")).unwrap();
-    
-        // tray.add_label("Tray Label").unwrap();
-    
-        tray.add_menu_item("Hello", || {
-            println!("Hello!");
-        }).unwrap();
-    
-        tray.add_menu_item("Quit", || {
-            gtk::main_quit();
-        }).unwrap();
-    
-        gtk::main();
-    }ed to open icon path").to_rgba8();
+    let image = image::load_from_memory(icon).expect("Failuse to load image").to_rgba8();
     let (icon_width, icon_height) = image.dimensions();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 750.0]).with_icon(
