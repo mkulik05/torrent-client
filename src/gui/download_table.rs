@@ -96,6 +96,22 @@ impl MyApp {
                         row.col(|ui| {
                             ui.label("0");
                         });
+
+                        if row.response().clicked() {
+                            self.selected_row = if let Some(n) = self.selected_row {
+                                if n == row_index {
+                                    None
+                                } else {
+                                    Some(row_index)
+                                }
+                            } else {
+                                Some(row_index)
+                            }
+                        }
+                        if let DownloadStatus::Error(msg) = &self.torrents[row_index].status {
+                            row.response().on_hover_text(msg);
+                        }
+                        
                         row.response().context_menu(|ui| {
                             // self.context_selected_row = Some(row_index);
 
@@ -135,20 +151,6 @@ impl MyApp {
                                 ui.close_menu();
                             };
                         });
-                        if row.response().clicked() {
-                            self.selected_row = if let Some(n) = self.selected_row {
-                                if n == row_index {
-                                    None
-                                } else {
-                                    Some(row_index)
-                                }
-                            } else {
-                                Some(row_index)
-                            }
-                        }
-                        if let DownloadStatus::Error(msg) = &self.torrents[row_index].status {
-                            row.response().on_hover_text(msg);
-                        }
                     })
                 };
             });

@@ -100,6 +100,16 @@ impl MyApp {
         }
         backup::remove_torrent(&self.torrents[i].torrent.info_hash).unwrap();
         self.torrents.remove(i);
+        if self.selected_row.is_some() {
+            let row = self.selected_row.unwrap();
+            if row == i {
+                self.selected_row = None; 
+                return;
+            }
+            if row > i {
+                self.selected_row = Some(row - 1);
+            }
+        }
     }
     pub fn torrent_updates(&mut self) {
         for (i, torrent) in self.torrents.iter_mut().enumerate() {
