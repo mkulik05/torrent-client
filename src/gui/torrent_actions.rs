@@ -104,20 +104,22 @@ impl MyApp {
                 continue;
             }
             while let Ok(msg) = torrent.worker_info.as_mut().unwrap().receiver.try_recv() {
-                match msg {
-                    UiMsg::PieceDone(piece) => {
-                        self.pieces.push(piece);
-                        log!(LogLevel::Info, "{:?}", self.pieces);
-                        torrent.pieces_done += 1;
-                        if torrent.pieces_done == torrent.torrent.info.piece_hashes.len() as u32 {
-                            torrent.status = DownloadStatus::Finished;
+                if let DownloadStatus::Downloading = torrent.status {
+                    match msg {
+                        UiMsg::PieceDone(piece) => {
+                            self.pieces.push(piece);
+                            log!(LogLevel::Info, "{:?}", self.pieces);
+                            torrent.pieces_done += 1;
+                            if torrent.pieces_done == torrent.torrent.info.piece_hashes.len() as u32 {
+                                torrent.status = DownloadStatus::Finished;
+                            }
                         }
+                        UiMsg::TorrentFinished => {
+                            torrent.status = DownloadStatus::Finished;
+                            torrent.pieces_done = torrent.torrent.info.piece_hashes.len() as u32;
+                        }
+                        _ => {}
                     }
-                    UiMsg::TorrentFinished => {
-                        torrent.status = DownloadStatus::Finished;
-                        torrent.pieces_done = torrent.torrent.info.piece_hashes.len() as u32;
-                    }
-                    _ => {}
                 }
             }
         }

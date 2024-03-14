@@ -184,7 +184,6 @@ impl eframe::App for MyApp {
                 _ => {}
             }
         }
-        println!("Done");
     }
 }
 
