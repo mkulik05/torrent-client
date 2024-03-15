@@ -1,10 +1,10 @@
-use crate::gui::MyApp;
-use crate::gui::{TorrentInfo, DownloadStatus, UiHandle, UiMsg, WorkerInfo, TorrentDownload};
-use crate::engine::backup;
+use crate::engine::backup::Backup;
 use crate::engine::{
     download_torrent,
     logger::{log, LogLevel},
 };
+use crate::gui::MyApp;
+use crate::gui::{DownloadStatus, TorrentDownload, TorrentInfo, UiHandle, UiMsg, WorkerInfo};
 use eframe::egui;
 use tokio::sync::broadcast;
 
@@ -17,19 +17,19 @@ impl MyApp {
 
         let (sender, receiver) = broadcast::channel(20_000);
         let folder = match torrent_info {
-            TorrentInfo::Backup(ref backup) => {
-                backup.save_path.clone()
-            }
-                
+            TorrentInfo::Backup(ref backup) => backup.save_path.clone(),
+
             TorrentInfo::Torrent(ref torrent) => {
-                let pos = self.torrents.iter().position(|x| x.torrent.info_hash == torrent.info_hash);
+                let pos = self
+                    .torrents
+                    .iter()
+                    .position(|x| x.torrent.info_hash == torrent.info_hash);
                 if let Some(i) = pos {
                     self.torrents[i].save_dir.clone()
                 } else {
                     self.import_dest_dir.clone()
                 }
             }
-            
         };
         let handle = {
             let folder = folder.clone();
@@ -42,14 +42,11 @@ impl MyApp {
                     ui_sender: sender,
                     ctx,
                 };
-                if let Err(e) = download_torrent(
-                    torrent_info,
-                    &folder,
-                    ui_handle.clone(),
-                )
-                .await {
+                if let Err(e) = download_torrent(torrent_info, &folder, ui_handle.clone()).await {
                     log!(LogLevel::Fatal, "Failed to download torrent: {e}");
-                    ui_handle.send_with_update(UiMsg::TorrentErr(e.to_string())).unwrap();
+                    ui_handle
+                        .send_with_update(UiMsg::TorrentErr(e.to_string()))
+                        .unwrap();
                 }
                 log!(LogLevel::Info, "{} download finished", name);
             })
@@ -70,7 +67,7 @@ impl MyApp {
                 status: DownloadStatus::Downloading,
                 worker_info: Some(info),
                 pieces_done: 0,
-                save_dir: folder
+                save_dir: folder,
             });
         } else {
             self.torrents[torrent_i.unwrap()].worker_info = Some(info);
@@ -88,17 +85,16 @@ impl MyApp {
     }
 
     pub fn resume_torrent(&mut self, i: usize, ctx: &egui::Context) {
-        let backup = backup::load_backup(&self.torrents[i].torrent.info_hash);
+        let backup = async_std::task::block_on(
+            Backup::global().load_backup(&self.torrents[i].torrent.info_hash),
+        );
         log!(LogLevel::Info, "{:?}", backup);
         match backup {
             Ok(backup) => {
                 self.start_download(TorrentInfo::Backup(backup), ctx);
             }
             Err(_) => {
-                self.start_download(
-                    TorrentInfo::Torrent(self.torrents[i].torrent.clone()),
-                    ctx,
-                );
+                self.start_download(TorrentInfo::Torrent(self.torrents[i].torrent.clone()), ctx);
             }
         }
         self.torrents[i].status = DownloadStatus::Downloading;
@@ -108,12 +104,15 @@ impl MyApp {
         if let Some(ref info) = self.torrents[i].worker_info {
             info.sender.send(UiMsg::ForceOff).unwrap();
         }
-        backup::remove_torrent(&self.torrents[i].torrent.info_hash).unwrap();
+        async_std::task::block_on(
+            Backup::global().remove_torrent(&self.torrents[i].torrent.info_hash),
+        )
+        .unwrap();
         self.torrents.remove(i);
         if self.selected_row.is_some() {
             let row = self.selected_row.unwrap();
             if row == i {
-                self.selected_row = None; 
+                self.selected_row = None;
                 return;
             }
             if row > i {
@@ -131,17 +130,16 @@ impl MyApp {
                     match msg {
                         UiMsg::PieceDone(_) => {
                             torrent.pieces_done += 1;
-                            if torrent.pieces_done == torrent.torrent.info.piece_hashes.len() as u32 {
+                            if torrent.pieces_done == torrent.torrent.info.piece_hashes.len() as u32
+                            {
                                 torrent.status = DownloadStatus::Finished;
                             }
                         }
                         UiMsg::TorrentFinished => {
                             torrent.status = DownloadStatus::Finished;
                             torrent.pieces_done = torrent.torrent.info.piece_hashes.len() as u32;
-                        },
-                        UiMsg::TorrentErr(msg) => {
-                            torrent.status = DownloadStatus::Error(msg)
-                        },
+                        }
+                        UiMsg::TorrentErr(msg) => torrent.status = DownloadStatus::Error(msg),
                         _ => {}
                     }
                 }

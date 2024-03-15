@@ -1,4 +1,5 @@
-use crate::gui::{TorrentBackupInfo, UiHandle, UiMsg, DownloadStatus};
+use crate::engine::backup::Backup;
+use crate::gui::{DownloadStatus, TorrentBackupInfo, UiHandle, UiMsg};
 use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Arc;
@@ -17,6 +18,7 @@ use self::download::tasks::CHUNK_SIZE;
 use self::download::DataPiece;
 use crate::logger::{log, LogLevel};
 
+pub mod backup;
 mod bencode;
 pub mod download;
 pub mod logger;
@@ -24,7 +26,6 @@ mod peers;
 mod saver;
 pub mod torrent;
 mod tracker;
-pub mod backup;
 
 #[derive(Debug)]
 pub enum DownloadEvents {
@@ -68,9 +69,7 @@ pub async fn download_torrent(
     ui_handle: UiHandle,
 ) -> anyhow::Result<()> {
     let torrent = match torrent_info {
-        TorrentInfo::Torrent(ref torrent) => {
-            torrent.clone()
-        },
+        TorrentInfo::Torrent(ref torrent) => torrent.clone(),
         TorrentInfo::Backup(ref backup) => backup.torrent.clone(),
     };
 
@@ -95,7 +94,11 @@ pub async fn download_torrent(
     let save_path = save_path.to_str().unwrap();
     let tracker_req = TrackerReq::init(&torrent);
     let mut n = 0;
-    let max_n = if let Some(urls) = &torrent.tracker_urls {urls.len() } else { 3 };
+    let max_n = if let Some(urls) = &torrent.tracker_urls {
+        urls.len()
+    } else {
+        3
+    };
     let mut tracker_resp = tracker_req.send(&torrent.tracker_url).await;
     while let Err(ref e) = tracker_resp {
         log!(LogLevel::Error, "Tracker request failed: {e}");
@@ -173,7 +176,7 @@ pub async fn download_torrent(
         } else {
             None
         },
-        saver_cancel.clone()
+        saver_cancel.clone(),
     );
 
     if pieces_tasks.is_empty() && chunks_tasks.is_empty() {
@@ -232,7 +235,7 @@ pub async fn download_torrent(
                         },
                         ref msg @ UiMsg::Stop(done) | ref msg @ UiMsg::Pause(done) => {
                             log!(LogLevel::Debug, "Gor pause msg, shutting down..");
-                            backup::backup_torrent(
+                            Backup::global().backup_torrent(
                                 TorrentBackupInfo {
                                     pieces_tasks,
                                     chunks_tasks,
@@ -245,7 +248,7 @@ pub async fn download_torrent(
                                         DownloadStatus::Downloading
                                     }
                                 },
-                            )?
+                            ).await?;
                         },
                         _ => {}
                     }
@@ -286,7 +289,7 @@ pub async fn download_torrent(
                                 handle.abort();
                             }
                         }
-                        backup::backup_torrent(TorrentBackupInfo {
+                        Backup::global().backup_torrent(TorrentBackupInfo {
                             pieces_tasks,
                             chunks_tasks,
                             torrent: Arc::as_ref(&torrent).clone(),
@@ -297,7 +300,7 @@ pub async fn download_torrent(
                             } else {
                                 DownloadStatus::Downloading
                             },
-                        })?;
+                        }).await?;
                         saver_cancel.cancel();
                         let _ = saver_task.await;
                         log!(LogLevel::Info, "Saver is gone");
@@ -376,7 +379,7 @@ pub async fn download_torrent(
         if chunks_tasks.len() < MAX_CHUNKS_TASKS {
             download::tasks::add_chunks_tasks(&mut pieces_tasks, &mut chunks_tasks, 1);
         }
-        
+
         if !chunks_tasks.is_empty() {
             let send_status = send_status.clone();
             let some_pos = peers.iter().position(|x| {

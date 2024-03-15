@@ -6,7 +6,7 @@ mod torrent_import;
 mod torrent_actions;
 mod files_tree;
 
-use crate::engine::backup;
+use crate::engine::backup::Backup;
 use crate::engine::TorrentInfo;
 use crate::engine::{
     download::{ChunksTask, PieceTask},
@@ -163,14 +163,14 @@ impl eframe::App for MyApp {
                     // Data is already backed up
                 },
                 status => {
-                    backup::backup_torrent(TorrentBackupInfo {
+                    async_std::task::block_on(Backup::global().backup_torrent(TorrentBackupInfo {
                         pieces_tasks: VecDeque::new(),
                         chunks_tasks: VecDeque::new(),
                         torrent: q_torrent.torrent.clone(),
                         save_path: q_torrent.save_dir.clone(),
                         pieces_done: q_torrent.pieces_done as usize,
                         status: status.clone(),
-                    })
+                    }))
                     .unwrap();
                 }
             }
@@ -193,7 +193,8 @@ impl eframe::App for MyApp {
 impl MyApp {
     fn init(&mut self, ctx: &egui::Context) {
         self.inited = true;
-        match backup::load_config() {
+        Backup::init();
+        match async_std::task::block_on(Backup::global().load_config()) {
             Ok(backups) => {
                 for backup in backups {
                     self.torrents.push(TorrentDownload {
