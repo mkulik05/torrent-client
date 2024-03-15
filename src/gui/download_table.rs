@@ -7,12 +7,13 @@ impl MyApp {
         let mut table = TableBuilder::new(ui)
             .striped(true)
             .resizable(true)
+            .auto_shrink(false)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
             .column(Column::auto().clip(true))
             .column(Column::auto())
             .column(Column::auto())
             .column(Column::initial(100.0).at_least(40.0).clip(true))
-            .column(Column::remainder())
+            .column(Column::remainder().at_least(40.0))
             .min_scrolled_height(0.0);
 
         table = table.sense(egui::Sense::click());

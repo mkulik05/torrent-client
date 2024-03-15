@@ -28,8 +28,8 @@ pub fn start_gui() -> anyhow::Result<()> {
     let image = image::load_from_memory(icon).expect("Failuse to load image").to_rgba8();
     let (icon_width, icon_height) = image.dimensions();
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 750.0]).with_icon(
-            egui::IconData { 
+        viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 750.0]).with_min_inner_size([400.0, 200.0]).with_icon(
+            egui::IconData {
                 rgba: image.into_raw(), 
                 width: icon_width, 
                 height: icon_height,
