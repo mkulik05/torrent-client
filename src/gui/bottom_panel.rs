@@ -1,6 +1,20 @@
-use crate::gui::MyApp;
+use egui::text::TextWrapping;
+
 use super::get_readable_size;
 use crate::gui::files_tree::draw_tree;
+use crate::gui::MyApp;
+
+macro_rules! label {
+    ($ui:ident, $string:expr) => {{
+        let mut job =
+            egui::text::LayoutJob::single_section($string.to_owned(), egui::TextFormat::default());
+        job.wrap = egui::text::TextWrapping {
+            break_anywhere: true,
+            ..Default::default()
+        };
+        $ui.label(job)
+    }};
+}
 
 impl MyApp {
     pub fn bottom_panel(&mut self, ctx: &egui::Context) {
@@ -22,12 +36,10 @@ impl MyApp {
                                 if let Some(i) = self.selected_row {
                                     data = self.torrents[i].save_dir.clone();
                                 }
-                                ui.monospace(format!(
-                                    "{:<width$} {}",
-                                    "Save path:",
-                                    data,
-                                    width = max_w
-                                ));
+                                label!(
+                                    ui,
+                                    format!("{:<width$} {}", "Save path:", data, width = max_w)
+                                );
 
                                 if let Some(i) = self.selected_row {
                                     data = get_readable_size(
@@ -35,12 +47,11 @@ impl MyApp {
                                         3,
                                     );
                                 }
-                                ui.monospace(format!(
-                                    "{:<width$} {}",
-                                    "Total size:",
-                                    data,
-                                    width = max_w
-                                ));
+
+                                label!(
+                                    ui,
+                                    format!("{:<width$} {}", "Total size:", data, width = max_w)
+                                );
 
                                 if let Some(i) = self.selected_row {
                                     data = get_readable_size(
@@ -48,12 +59,9 @@ impl MyApp {
                                         0,
                                     );
                                 }
-                                ui.monospace(format!(
-                                    "{:<width$} {}",
-                                    "Piece size:",
-                                    data,
-                                    width = max_w
-                                ));
+
+                                label!(ui, format!("{:<width$} {}", "Piece size:", data, width = max_w));
+
 
                                 if let Some(i) = self.selected_row {
                                     data = self.torrents[i]
@@ -63,27 +71,19 @@ impl MyApp {
                                         .len()
                                         .to_string();
                                 }
-                                ui.monospace(format!(
-                                    "{:<width$} {}",
-                                    "Pieces number:",
-                                    data,
-                                    width = max_w
-                                ));
 
+                                label!(ui, format!("{:<width$} {}", "Pieces N:", data, width = max_w));
+                                
                                 if let Some(i) = self.selected_row {
                                     data = hex::encode(&self.torrents[i].torrent.info_hash);
                                 }
-                                ui.monospace(format!(
-                                    "{:<width$} {}",
-                                    "Info hash:",
-                                    data,
-                                    width = max_w
-                                ));
+
+                                label!(ui, format!("{:<width$} {}", "Info hash:", data, width = max_w));
                             });
 
                             cols[1].label("Downloading");
                             cols[1].group(|ui| {
-                                let max_w = 20;
+                                let max_w = 15;
                                 let mut data = String::new();
 
                                 if let Some(i) = self.selected_row {
