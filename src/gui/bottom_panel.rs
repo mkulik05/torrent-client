@@ -1,17 +1,23 @@
-use egui::text::TextWrapping;
-
 use super::get_readable_size;
 use crate::gui::files_tree::draw_tree;
 use crate::gui::MyApp;
+use egui::{FontFamily, FontId, TextFormat};
 
 macro_rules! label {
-    ($ui:ident, $string:expr) => {{
-        let mut job =
-            egui::text::LayoutJob::single_section($string.to_owned(), egui::TextFormat::default());
+    ($ui:ident, $str1:expr, $str2:expr, $max_n:expr) => {{
+        let mut job = egui::text::LayoutJob::default();
         job.wrap = egui::text::TextWrapping {
             break_anywhere: true,
             ..Default::default()
         };
+        job.append(
+            format!("{:<width$} {}", $str1, $str2, width = $max_n).as_str(),
+            0.0,
+            TextFormat {
+                font_id: FontId::new(12.0, FontFamily::Monospace),
+                ..Default::default()
+            },
+        );
         $ui.label(job)
     }};
 }
@@ -31,15 +37,12 @@ impl MyApp {
                         ui.columns(2, |cols| {
                             cols[0].label("General info");
                             cols[0].group(|ui| {
-                                let max_w = 15;
+                                let max_w = 11;
                                 let mut data = String::new();
                                 if let Some(i) = self.selected_row {
                                     data = self.torrents[i].save_dir.clone();
                                 }
-                                label!(
-                                    ui,
-                                    format!("{:<width$} {}", "Save path:", data, width = max_w)
-                                );
+                                label!(ui, "Save path:", data, max_w);
 
                                 if let Some(i) = self.selected_row {
                                     data = get_readable_size(
@@ -48,10 +51,7 @@ impl MyApp {
                                     );
                                 }
 
-                                label!(
-                                    ui,
-                                    format!("{:<width$} {}", "Total size:", data, width = max_w)
-                                );
+                                label!(ui, "Total size:", data, max_w);
 
                                 if let Some(i) = self.selected_row {
                                     data = get_readable_size(
@@ -60,8 +60,7 @@ impl MyApp {
                                     );
                                 }
 
-                                label!(ui, format!("{:<width$} {}", "Piece size:", data, width = max_w));
-
+                                label!(ui, "Piece size:", data, max_w);
 
                                 if let Some(i) = self.selected_row {
                                     data = self.torrents[i]
@@ -72,13 +71,13 @@ impl MyApp {
                                         .to_string();
                                 }
 
-                                label!(ui, format!("{:<width$} {}", "Pieces N:", data, width = max_w));
-                                
+                                label!(ui, "Pieces N:", data, max_w);
+
                                 if let Some(i) = self.selected_row {
                                     data = hex::encode(&self.torrents[i].torrent.info_hash);
                                 }
 
-                                label!(ui, format!("{:<width$} {}", "Info hash:", data, width = max_w));
+                                label!(ui, "Info hash:", data, max_w);
                             });
 
                             cols[1].label("Downloading");
@@ -94,24 +93,12 @@ impl MyApp {
                                         1,
                                     );
                                 }
-                                ui.monospace(format!(
-                                    "{:<width$} {}",
-                                    "Downloaded:",
-                                    data,
-                                    width = max_w
-                                ));
-                                ui.monospace(format!(
-                                    "{:<width$} {}",
-                                    "Uploaded:",
-                                    0,
-                                    width = max_w
-                                ));
-                                ui.monospace(format!(
-                                    "{:<width$} {}",
-                                    "Peers number:",
-                                    0,
-                                    width = max_w
-                                ));
+
+                                label!(ui, "Downloaded:", data, max_w);
+
+                                label!(ui, "Downloaded:", 0, max_w);
+
+                                label!(ui, "Peers number:", 0, max_w);
                             });
                         });
 
