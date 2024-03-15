@@ -151,7 +151,7 @@ impl eframe::App for MyApp {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
 
         for q_torrent in &self.torrents {
-            match q_torrent.status {
+            match &q_torrent.status {
                 DownloadStatus::Downloading => {
                     if let Some(info) = &q_torrent.worker_info {
                         info.sender
@@ -159,21 +159,20 @@ impl eframe::App for MyApp {
                             .unwrap();
                     }
                 }
-                DownloadStatus::Finished => {
+                DownloadStatus::Paused => {
+                    // Data is already backed up
+                },
+                status => {
                     backup::backup_torrent(TorrentBackupInfo {
                         pieces_tasks: VecDeque::new(),
                         chunks_tasks: VecDeque::new(),
                         torrent: q_torrent.torrent.clone(),
-                        save_path: "".to_string(),
-                        pieces_done: 0,
-                        status: DownloadStatus::Finished,
+                        save_path: q_torrent.save_dir.clone(),
+                        pieces_done: q_torrent.pieces_done as usize,
+                        status: status.clone(),
                     })
                     .unwrap();
                 }
-                DownloadStatus::Paused => {
-                    // Data is already backed up
-                },
-                _ => {}
             }
         }
 

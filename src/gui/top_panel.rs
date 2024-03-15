@@ -43,11 +43,20 @@ impl MyApp {
                 ui.horizontal(|ui| {
                     ui.horizontal(|ui| {
                         ui.set_enabled(self.selected_row.is_some());
+
                         if ui.button("Pause").clicked() {
-                            self.pause_torrent(self.selected_row.unwrap());
+                            if let DownloadStatus::Downloading | DownloadStatus::Error(_) =
+                                self.torrents[self.selected_row.unwrap()].status
+                            {
+                                self.pause_torrent(self.selected_row.unwrap());
+                            }
                         }
                         if ui.button("Resume").clicked() {
-                            self.resume_torrent(self.selected_row.unwrap(), ctx);
+                            if let DownloadStatus::Paused | DownloadStatus::Error(_) =
+                                self.torrents[self.selected_row.unwrap()].status
+                            {
+                                self.resume_torrent(self.selected_row.unwrap(), ctx);
+                            }
                         }
                         if ui.button("Delete").clicked() {
                             self.delete_torrent(self.selected_row.unwrap());

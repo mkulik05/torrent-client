@@ -26,6 +26,7 @@ pub mod torrent;
 mod tracker;
 pub mod backup;
 
+#[derive(Debug)]
 pub enum DownloadEvents {
     ChunksFail(ChunksTask),
     InvalidHash(u64),
@@ -209,6 +210,7 @@ pub async fn download_torrent(
                     continue;
                 }
                 res = get_status.recv() => {
+                    log!(LogLevel::Debug, "Got result: {:?}", res);
                     output = res;
                 }
                 msg @ Ok(UiMsg::ForceOff | UiMsg::Pause(_) | UiMsg::Stop(_)) = ui_reader.recv() => {
