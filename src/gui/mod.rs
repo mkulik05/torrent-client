@@ -107,10 +107,10 @@ pub struct MyApp {
     selected_row: Option<usize>,
     user_msg: Option<(String, String)>,
     inited: bool,
-    pieces: Vec<u16>,
     import_opened: bool,
     import_dest_dir: String,
     import_torrent: Option<Torrent>,
+    torrent_to_delete: Option<usize>
 }
 
 
@@ -121,10 +121,10 @@ impl Default for MyApp {
             selected_row: None,
             user_msg: None,
             inited: false,
-            pieces: Vec::new(),
             import_opened: false,
             import_dest_dir: String::new(),
             import_torrent: None,
+            torrent_to_delete: None
         }
     }
 }

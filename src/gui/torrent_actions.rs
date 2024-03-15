@@ -16,10 +16,20 @@ impl MyApp {
         };
 
         let (sender, receiver) = broadcast::channel(20_000);
-        let folder = if let TorrentInfo::Backup(ref backup) = torrent_info {
-            backup.save_path.clone()
-        } else {
-            self.import_dest_dir.clone()
+        let folder = match torrent_info {
+            TorrentInfo::Backup(ref backup) => {
+                backup.save_path.clone()
+            }
+                
+            TorrentInfo::Torrent(ref torrent) => {
+                let pos = self.torrents.iter().position(|x| x.torrent.info_hash == torrent.info_hash);
+                if let Some(i) = pos {
+                    self.torrents[i].save_dir.clone()
+                } else {
+                    self.import_dest_dir.clone()
+                }
+            }
+            
         };
         let handle = {
             let folder = folder.clone();
@@ -112,16 +122,14 @@ impl MyApp {
         }
     }
     pub fn torrent_updates(&mut self) {
-        for (i, torrent) in self.torrents.iter_mut().enumerate() {
+        for torrent in &mut self.torrents {
             if torrent.worker_info.is_none() {
                 continue;
             }
             while let Ok(msg) = torrent.worker_info.as_mut().unwrap().receiver.try_recv() {
                 if let DownloadStatus::Downloading = torrent.status {
                     match msg {
-                        UiMsg::PieceDone(piece) => {
-                            self.pieces.push(piece);
-                            log!(LogLevel::Info, "{:?}", self.pieces);
+                        UiMsg::PieceDone(_) => {
                             torrent.pieces_done += 1;
                             if torrent.pieces_done == torrent.torrent.info.piece_hashes.len() as u32 {
                                 torrent.status = DownloadStatus::Finished;
@@ -138,6 +146,11 @@ impl MyApp {
                     }
                 }
             }
+        }
+
+        if let Some(i) = self.torrent_to_delete {
+            self.delete_torrent(i);
+            self.torrent_to_delete = None;
         }
     }
 }

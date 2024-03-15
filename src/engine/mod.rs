@@ -26,7 +26,7 @@ pub mod torrent;
 mod tracker;
 pub mod backup;
 
-enum DownloadEvents {
+pub enum DownloadEvents {
     ChunksFail(ChunksTask),
     InvalidHash(u64),
     Finished,
@@ -199,8 +199,9 @@ pub async fn download_torrent(
         let download_status = if wait_for_channel_msg {
             let output;
             log!(LogLevel::Debug, "Before select");
+            let time = tokio::time::sleep(Duration::from_secs(20));
             tokio::select! {
-                _ = tokio::time::sleep(Duration::from_secs(20)) => {
+                _ = time => {
                     log!(LogLevel::Info, "Started peer search");
                     tracker_resp
                         .clone()

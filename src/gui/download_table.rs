@@ -147,7 +147,7 @@ impl MyApp {
                             };
 
                             if ui.button("Delete").clicked() {
-                                self.delete_torrent(row_index);
+                                self.torrent_to_delete = Some(row_index);
                                 ui.close_menu();
                             };
                         });

@@ -60,7 +60,7 @@ impl TrackerReq {
             .build()?;
 
         let res = timeout(
-            Duration::from_secs(2),
+            Duration::from_secs(5),
             client
                 .get(format!("{}?info_hash={}", tracker_url, self.info_hash))
                 .query(params)
