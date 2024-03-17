@@ -3,6 +3,9 @@ name = "torrent-client"
 version = "0.1.0"
 edition = "2021"
 
+[profile.release]
+debug = true
+
 [dependencies]
 anyhow = "1.0.68"
 async-recursion = "1.0.5"

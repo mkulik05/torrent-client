@@ -1,4 +1,5 @@
 use std::fmt::Write;
+use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,7 +16,7 @@ use super::torrent::Torrent;
 use super::DownloadEvents;
 
 pub struct TrackerReq {
-    pub info_hash: String,
+    pub info_hash: Vec<u8>,
     pub peer_id: String,
     pub port: u32,
     pub uploaded: u64,
@@ -30,13 +31,20 @@ pub struct TrackerResp {
     pub peers: Vec<String>,
 }
 
+macro_rules! concat_slices {
+    ($($slice:expr),*) => {{
+        let mut buf = Vec::new();
+        $(
+            buf.extend_from_slice($slice);
+        )*
+        buf
+    }};
+}
+
 impl TrackerReq {
     pub fn init(torrent: &Torrent) -> Self {
         TrackerReq {
-            info_hash: torrent.info_hash.iter().fold(String::new(), |mut s, b| {
-                write!(s, "%{:02x}", b).unwrap();
-                s
-            }),
+            info_hash: torrent.info_hash.clone(),
             peer_id: Alphanumeric.sample_string(&mut rand::thread_rng(), 20),
             port: 6681,
             uploaded: 0,
@@ -46,6 +54,10 @@ impl TrackerReq {
         }
     }
     pub async fn send(&self, tracker_url: &String) -> anyhow::Result<TrackerResp> {
+        log!(LogLevel::Info, "{tracker_url}");
+        if tracker_url.starts_with("udp://") {
+            return self.send_udp(tracker_url).await;
+        }
         let params = &[
             ("peer_id", self.peer_id.clone()),
             ("port", self.port.to_string()),
@@ -62,7 +74,14 @@ impl TrackerReq {
         let res = timeout(
             Duration::from_secs(5),
             client
-                .get(format!("{}?info_hash={}", tracker_url, self.info_hash))
+                .get(format!(
+                    "{}?info_hash={}",
+                    tracker_url,
+                    self.info_hash.iter().fold(String::new(), |mut s, b| {
+                        write!(s, "%{:02x}", b).unwrap();
+                        s
+                    })
+                ))
                 .query(params)
                 .send(),
         )
@@ -98,6 +117,111 @@ impl TrackerReq {
                 Ok(TrackerResp { interval, peers })
             }
         }
+    }
+
+    async fn send_udp(&self, tracker_url: &String) -> anyhow::Result<TrackerResp> {
+        log!(
+            LogLevel::Info,
+            "Torrent is udp, {:?}",
+            tracker_url.strip_prefix("udp://")
+        );
+        let connection_id: u64 = 0x41727101980;
+        let action_connect: u32 = 0;
+        let action_announce: u32 = 1;
+        let action_scrape: u32 = 2;
+        let transaction_id: u32 = rand::random();
+
+        // Create UDP socket
+        let socket = UdpSocket::bind("0.0.0.0:0")?;
+
+        // Connect to tracker
+        socket.connect(tracker_url.strip_prefix("udp://").unwrap())?;
+        let connect_packet = concat_slices![
+            &connection_id.to_be_bytes(),
+            &action_connect.to_be_bytes(),
+            &transaction_id.to_be_bytes()
+        ];
+
+        socket.send(&connect_packet)?;
+
+        // Receive response
+        let mut buf = [0u8; 1024];
+        let (bytes_read, _) = socket.recv_from(&mut buf)?;
+        if bytes_read < 16 {
+            anyhow::bail!("Invalid response received".to_string());
+        }
+        let received_transaction_id = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
+
+        let received_action = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+        if received_transaction_id != transaction_id || received_action != action_connect {
+            anyhow::bail!("Invalid response received".to_string());
+        }
+        let received_connection_id = u64::from_be_bytes([
+            buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15],
+        ]);
+
+        log!(
+            LogLevel::Info,
+            "{} {:?}",
+            received_connection_id,
+            &self.info_hash
+        );
+
+        // Announce
+        let announce_packet = concat_slices![
+            &received_connection_id.to_be_bytes(),
+            &action_announce.to_be_bytes(),
+            &transaction_id.to_be_bytes(),
+            &self.info_hash,
+            &vec![0u8; 20],         // Peer ID
+            &0i64.to_be_bytes(),    // Downloaded
+            &0i64.to_be_bytes(),    // Left
+            &0i64.to_be_bytes(),    // Uploaded
+            &0i32.to_be_bytes(),    // Event
+            &0i32.to_be_bytes(),    // IP Address
+            &0i32.to_be_bytes(),    // Key
+            &(-1i32).to_be_bytes(), // Num Want
+            &6881u16.to_be_bytes()  // Port
+        ];
+        socket.send(&announce_packet)?;
+
+        // Receive announce response
+        let (bytes_read, _) = socket.recv_from(&mut buf)?;
+        if bytes_read < 20 {
+            anyhow::bail!("Invalid announce response received");
+        }
+        let received_transaction_id = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
+        let received_action = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+        if received_transaction_id != transaction_id || received_action != action_announce {
+            anyhow::bail!("Invalid announce response received");
+        }
+        let interval = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
+        // Parse peers
+
+        log!(LogLevel::Info, "{bytes_read} {:?}", &buf[..bytes_read]);
+
+
+        let mut peers = Vec::new();
+        let mut offset = 20;
+        while offset + 6 < bytes_read {
+            let ip_bytes: [u8; 4] = [
+                buf[offset],
+                buf[offset + 1],
+                buf[offset + 2],
+                buf[offset + 3],
+            ];
+            let port = u16::from_be_bytes([buf[offset + 4], buf[offset + 5]]);
+            let peer_addr = format!(
+                "{}.{}.{}.{}:{}",
+                ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3], port
+            );
+            peers.push(peer_addr);
+            offset += 6;
+        }
+        Ok(TrackerResp {
+            interval: interval as i64,
+            peers,
+        })
     }
 }
 

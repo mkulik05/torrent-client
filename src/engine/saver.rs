@@ -140,6 +140,8 @@ pub fn spawn_saver(
         let mut pieces_chunks: HashMap<u64, PieceChunksBitmap> = HashMap::new();
         let mut pieces_finished = pieces_done;
         if let Some(backup) = backup {
+            log!(LogLevel::Debug, "{:?}", backup.pieces_tasks);
+            log!(LogLevel::Debug, "{:?}", backup.chunks_tasks);
             // For each piece marking done pieces
             log!(
                 LogLevel::Debug,
@@ -185,12 +187,6 @@ pub fn spawn_saver(
                 },
                 data = get_data.recv() => {
                     let Some(data) = data else {break};
-                    log!(
-                        LogLevel::Info,
-                        "Saver: {}.. piece {}",
-                        data.begin,
-                        data.piece_i
-                    );
                     if pieces_chunks.contains_key(&data.piece_i)
                 && pieces_chunks
                     .get(&data.piece_i)

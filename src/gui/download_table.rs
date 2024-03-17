@@ -90,7 +90,7 @@ impl MyApp {
                             let size = get_readable_size(
                                 self.torrents[row_index].pieces_done as usize
                                     * self.torrents[row_index].torrent.info.piece_length as usize,
-                                0,
+                                2,
                             );
                             ui.label(size);
                         });

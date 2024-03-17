@@ -7,3 +7,4 @@ perf*
 callgrind.*
 .vscode
 .idea
+benchs

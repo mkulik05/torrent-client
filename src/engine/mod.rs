@@ -379,35 +379,43 @@ pub async fn download_torrent(
         if chunks_tasks.len() < MAX_CHUNKS_TASKS {
             download::tasks::add_chunks_tasks(&mut pieces_tasks, &mut chunks_tasks, 1);
         }
-
+        log!(LogLevel::Debug, "Got to task assignment");
         if !chunks_tasks.is_empty() {
             let send_status = send_status.clone();
-            let some_pos = peers.iter().position(|x| {
-                if let DownloaderPeer::Free(_) = x {
-                    true
-                } else {
-                    false
+            let mut free_poses = Vec::with_capacity(peers.len());
+            for (i, peer) in peers.iter().enumerate() {
+                if let DownloaderPeer::Free(_) = peer {
+                    free_poses.push(i);
                 }
-            });
-            let some_pos = if some_pos.is_none() {
+            }
+
+            log!(LogLevel::Debug, "{:?} {:?}", free_poses, peers);
+            if free_poses.is_empty() {
                 log!(LogLevel::Debug, "No free peers, skipping iteration");
                 wait_for_channel_msg = true;
                 continue;
-            } else {
-                some_pos.unwrap()
-            };
-            let DownloaderPeer::Free(ref mut peer) = peers[some_pos] else {
-                panic!("not possible")
-            };
-            let task = chunks_tasks.pop_front().unwrap();
-            if !peer.have_piece(task.piece_i as usize) {
-                let peers_len = peers.len();
-                peers.swap(some_pos, peers_len - 1);
-                chunks_tasks.push_front(task);
-                continue;
             }
+            let task = chunks_tasks.pop_front().unwrap();
+            let peer_i = {
+                let mut ok_peer_i = None;
+                for i in &free_poses {
+                    let DownloaderPeer::Free(ref mut peer) = peers[*i] else {continue};
+                    if peer.have_piece(task.piece_i as usize) {
+                        ok_peer_i = Some(*i);
+                        break;
+                    }
+                }
+                if let Some(i) = ok_peer_i {
+                    i
+                } else {
+                    log!(LogLevel::Debug, "No peers that have this piece, skipping iteration");
+                    wait_for_channel_msg = true;
+                    chunks_tasks.push_front(task);
+                    continue;
+                } 
+            };
             let DownloaderPeer::Free(peer) = std::mem::replace(
-                &mut peers[some_pos],
+                &mut peers[peer_i],
                 DownloaderPeer::Busy(DownloaderInfo {
                     handle: None,
                     task: task.clone(),
@@ -439,7 +447,7 @@ pub async fn download_torrent(
                         .unwrap();
                 };
             });
-            if let DownloaderPeer::Busy(ref mut info) = peers[some_pos] {
+            if let DownloaderPeer::Busy(ref mut info) = peers[peer_i] {
                 info.handle = Some(handle);
             }
         } else {

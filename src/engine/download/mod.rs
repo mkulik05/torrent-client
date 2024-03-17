@@ -177,9 +177,11 @@ impl DownloadReq {
         } else {
             log!(LogLevel::Debug, "downloaded");
         }
+        log!(LogLevel::Debug, "Got to peer add sender");
         error_sender
             .send(DownloadEvents::PeerAdd(self.peer))
             .await?;
+        log!(LogLevel::Debug, "Passed it");
         Ok(())
     }
 }

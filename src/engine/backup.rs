@@ -32,14 +32,6 @@ impl Backup {
     }
 
     pub fn init() -> Result<(), anyhow::Error> {
-        let path = std::env::temp_dir();
-        let path = path
-            .join(format!("log{}.txt", chrono::Local::now().format("%d-%m-%Y_%H-%M-%S")))
-            .to_str()
-            .unwrap()
-            .to_owned();
-
-        println!("Log path: {}", path);
         BACKUP
             .set(Backup { sync: Arc::new(Mutex::new(())) })
             .expect("Failed to initialise logger");
