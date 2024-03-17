@@ -86,17 +86,19 @@ impl MyApp {
                                 let mut data = String::new();
 
                                 if let Some(i) = self.selected_row {
-                                    data = get_readable_size(
-                                        self.torrents[i].torrent.info.piece_length as usize
-                                            * self.torrents[i].torrent.info.piece_hashes.len()
-                                                as usize,
+                                    let mut size = self.torrents[i].pieces_done as usize
+                                    * self.torrents[i].torrent.info.piece_length as usize;
+                                    if size > self.torrents[i].torrent.info.length as usize {
+                                        size = self.torrents[i].torrent.info.length as usize;
+                                    } 
+                                    data = get_readable_size(size,
                                         1,
                                     );
                                 }
 
                                 label!(ui, "Downloaded:", data, max_w);
 
-                                label!(ui, "Downloaded:", 0, max_w);
+                                label!(ui, "Uploaded:", 0, max_w);
 
                                 label!(ui, "Peers number:", 0, max_w);
                             });

@@ -38,27 +38,27 @@ impl MyApp {
             .body(|body| {
                 {
                     body.heterogeneous_rows((0..self.torrents.len()).map(|_| 16.0), |mut row| {
-                        let row_index = row.index();
+                        let row_i = row.index();
                         if let Some(n) = self.selected_row {
-                            row.set_selected(n == row_index);
+                            row.set_selected(n == row_i);
                         }
 
                         row.col(|ui| {
-                            ui.label(&self.torrents[row_index].torrent.info.name);
+                            ui.label(&self.torrents[row_i].torrent.info.name);
                         });
                         row.col(|ui| {
                             let postfixed_size = get_readable_size(
-                                self.torrents[row_index].torrent.info.length as usize,
+                                self.torrents[row_i].torrent.info.length as usize,
                                 2,
                             );
                             ui.label(postfixed_size);
                         });
                         row.col(|ui| {
                             let progress_bar = {
-                                match self.torrents[row_index].status {
+                                match self.torrents[row_i].status {
                                     DownloadStatus::Downloading => {
-                                        let progress = self.torrents[row_index].pieces_done as f32
-                                            / self.torrents[row_index]
+                                        let progress = self.torrents[row_i].pieces_done as f32
+                                            / self.torrents[row_i]
                                                 .torrent
                                                 .info
                                                 .piece_hashes
@@ -71,8 +71,8 @@ impl MyApp {
                                         egui::ProgressBar::new(1.0).fill(Color32::GREEN)
                                     }
                                     _ => {
-                                        let progress = self.torrents[row_index].pieces_done as f32
-                                            / self.torrents[row_index]
+                                        let progress = self.torrents[row_i].pieces_done as f32
+                                            / self.torrents[row_i]
                                                 .torrent
                                                 .info
                                                 .piece_hashes
@@ -87,9 +87,12 @@ impl MyApp {
                             ui.add(progress_bar);
                         });
                         row.col(|ui| {
-                            let size = get_readable_size(
-                                self.torrents[row_index].pieces_done as usize
-                                    * self.torrents[row_index].torrent.info.piece_length as usize,
+                            let mut size = self.torrents[row_i].pieces_done as usize
+                                    * self.torrents[row_i].torrent.info.piece_length as usize;
+                                    if size > self.torrents[row_i].torrent.info.length as usize {
+                                        size = self.torrents[row_i].torrent.info.length as usize;
+                                    } 
+                            let size = get_readable_size(size,
                                 2,
                             );
                             ui.label(size);
@@ -100,16 +103,16 @@ impl MyApp {
 
                         if row.response().clicked() {
                             self.selected_row = if let Some(n) = self.selected_row {
-                                if n == row_index {
+                                if n == row_i {
                                     None
                                 } else {
-                                    Some(row_index)
+                                    Some(row_i)
                                 }
                             } else {
-                                Some(row_index)
+                                Some(row_i)
                             }
                         }
-                        if let DownloadStatus::Error(msg) = &self.torrents[row_index].status {
+                        if let DownloadStatus::Error(msg) = &self.torrents[row_i].status {
                             row.response().on_hover_text(msg);
                         }
                         
@@ -118,7 +121,7 @@ impl MyApp {
 
                             let enabled = if let DownloadStatus::Finished
                             | DownloadStatus::Downloading =
-                                self.torrents[row_index].status
+                                self.torrents[row_i].status
                             {
                                 false
                             } else {
@@ -128,12 +131,12 @@ impl MyApp {
                                 .add_enabled(enabled, egui::Button::new("Resume"))
                                 .clicked()
                             {
-                                self.resume_torrent(row_index, ctx);
+                                self.resume_torrent(row_i, ctx);
                                 ui.close_menu();
                             };
 
                             let enabled = if let DownloadStatus::Finished | DownloadStatus::Paused =
-                                self.torrents[row_index].status
+                                self.torrents[row_i].status
                             {
                                 false
                             } else {
@@ -143,12 +146,12 @@ impl MyApp {
                                 .add_enabled(enabled, egui::Button::new("Pause"))
                                 .clicked()
                             {
-                                self.pause_torrent(row_index);
+                                self.pause_torrent(row_i);
                                 ui.close_menu();
                             };
 
                             if ui.button("Delete").clicked() {
-                                self.torrent_to_delete = Some(row_index);
+                                self.torrent_to_delete = Some(row_i);
                                 ui.close_menu();
                             };
                         });
