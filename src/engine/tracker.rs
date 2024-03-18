@@ -71,7 +71,6 @@ impl TrackerReq {
                     event_sender.clone(),
                     data_sender.clone(),
                 ));
-                break;
             }
         } else {
             handles.push(self.spawn_tracker_task(

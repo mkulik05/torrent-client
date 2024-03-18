@@ -330,6 +330,9 @@ pub async fn download_torrent(
                 DownloadEvents::PeerAdd(peer, discovered) => {
                     
                     // skipping if peer exists already
+                    if discovered {
+                        ui_handle.send_with_update(UiMsg::PeerDiscovered(peer.peer_addr.clone()))?;
+                    }
                     if discovered && peers.iter().position(|x| {
                         match x {
                             DownloaderPeer::Busy(info) => {

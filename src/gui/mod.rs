@@ -74,6 +74,9 @@ impl UiHandle {
 
 #[derive(Clone, Debug)]
 pub enum UiMsg {
+
+    PeerDiscovered(String),
+
     TorrentFinished,
     PieceDone(u16),
     ForceOff,
@@ -97,6 +100,7 @@ struct WorkerInfo {
 struct TorrentDownload {
     status: DownloadStatus,
     worker_info: Option<WorkerInfo>,
+    peers: Vec<String>,
     torrent: Torrent,
     pieces_done: u32,
     save_dir: String
@@ -124,7 +128,7 @@ impl Default for MyApp {
             import_opened: false,
             import_dest_dir: String::new(),
             import_torrent: None,
-            torrent_to_delete: None
+            torrent_to_delete: None,
         }
     }
 }
@@ -198,6 +202,7 @@ impl MyApp {
             Ok(backups) => {
                 for backup in backups {
                     self.torrents.push(TorrentDownload {
+                        peers: Vec::new(),
                         status: backup.status.clone(),
                         worker_info: None,
                         torrent: backup.torrent.clone(),

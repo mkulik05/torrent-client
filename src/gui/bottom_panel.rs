@@ -87,20 +87,23 @@ impl MyApp {
 
                                 if let Some(i) = self.selected_row {
                                     let mut size = self.torrents[i].pieces_done as usize
-                                    * self.torrents[i].torrent.info.piece_length as usize;
+                                        * self.torrents[i].torrent.info.piece_length as usize;
                                     if size > self.torrents[i].torrent.info.length as usize {
                                         size = self.torrents[i].torrent.info.length as usize;
-                                    } 
-                                    data = get_readable_size(size,
-                                        1,
-                                    );
+                                    }
+                                    data = get_readable_size(size, 1);
                                 }
 
                                 label!(ui, "Downloaded:", data, max_w);
 
                                 label!(ui, "Uploaded:", 0, max_w);
 
-                                label!(ui, "Peers number:", 0, max_w);
+                                let mut data = 0;
+
+                                if let Some(i) = self.selected_row {
+                                    data = self.torrents[i].peers.len();
+                                }
+                                label!(ui, "Peers number:", data, max_w);
                             });
                         });
 
@@ -109,33 +112,49 @@ impl MyApp {
                         ui.columns(2, |cols| {
                             cols[0].label("Files");
                             cols[0].group(|ui| {
-                                if let Some(i) = self.selected_row {
-                                    egui::ScrollArea::vertical()
+                                egui::ScrollArea::vertical()
+                                        .id_source("Files hierarchy")
                                         .max_height(ui.available_height() / 1.3)
                                         .auto_shrink(false)
                                         .show(ui, |ui| {
-                                            let torrent = &self.torrents[i].torrent;
-                                            if let Some(files) = &torrent.info.files {
-                                                draw_tree(
-                                                    &files
-                                                        .iter()
-                                                        .map(|x| x.path.as_str())
-                                                        .collect(),
-                                                    torrent.info.name.clone(),
-                                                    ui,
-                                                )
+                                            if let Some(i) = self.selected_row {
+                                                let torrent = &self.torrents[i].torrent;
+                                                if let Some(files) = &torrent.info.files {
+                                                    draw_tree(
+                                                        &files
+                                                            .iter()
+                                                            .map(|x| x.path.as_str())
+                                                            .collect(),
+                                                        torrent.info.name.clone(),
+                                                        ui,
+                                                    )
+                                                } else {
+                                                    ui.label(&torrent.info.name);
+                                                }
                                             } else {
-                                                ui.label(&torrent.info.name);
+                                                ui.label("");
                                             }
                                         });
-                                } else {
-                                    ui.label("");
-                                }
+
                             });
                             cols[1].label("Peers");
                             cols[1].group(|ui| {
-                                ui.monospace("world!");
-                                ui.monospace("Hello");
+                                egui::ScrollArea::vertical()
+                                    .id_source("Peers list")
+                                    .max_height(ui.available_height() / 1.3)
+                                    .auto_shrink(false)
+                                    .show(ui, |ui| {
+                                        if let Some(i) = self.selected_row {
+                                            for peer in &self.torrents[i].peers {
+                                                ui.monospace(peer);
+                                            }
+                                            if self.torrents[i].peers.is_empty() {
+                                                ui.label("");
+                                            }
+                                        } else {
+                                            ui.label("");
+                                        }
+                                    });
                             });
                         });
                     });

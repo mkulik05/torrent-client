@@ -63,6 +63,7 @@ impl MyApp {
             .position(|x| x.torrent.info_hash == torrent.info_hash);
         if torrent_i.is_none() {
             self.torrents.push(TorrentDownload {
+                peers: Vec::new(),
                 torrent,
                 status: DownloadStatus::Downloading,
                 worker_info: Some(info),
@@ -74,6 +75,7 @@ impl MyApp {
         }
     }
     pub fn pause_torrent(&mut self, i: usize) {
+        self.torrents[i].peers.clear();
         if let Some(ref info) = self.torrents[i].worker_info {
             log!(LogLevel::Info, "Sended msg!!!");
             info.sender
@@ -135,10 +137,16 @@ impl MyApp {
                             }
                         }
                         UiMsg::TorrentFinished => {
+                            torrent.peers.clear();
                             torrent.status = DownloadStatus::Finished;
                             torrent.pieces_done = torrent.torrent.info.piece_hashes.len() as u32;
                         }
                         UiMsg::TorrentErr(msg) => torrent.status = DownloadStatus::Error(msg),
+                        UiMsg::PeerDiscovered(peer) => {
+                            if torrent.peers.iter().position(|x| *x == peer).is_none() {
+                                torrent.peers.push(peer);
+                            }
+                        }
                         _ => {}
                     }
                 }
