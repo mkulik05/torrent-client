@@ -88,7 +88,6 @@ impl MyApp {
         let backup = async_std::task::block_on(
             Backup::global().load_backup(&self.torrents[i].torrent.info_hash),
         );
-        log!(LogLevel::Info, "{:?}", backup);
         match backup {
             Ok(backup) => {
                 self.start_download(TorrentInfo::Backup(backup), ctx);

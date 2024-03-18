@@ -140,15 +140,6 @@ pub fn spawn_saver(
         let mut pieces_chunks: HashMap<u64, PieceChunksBitmap> = HashMap::new();
         let mut pieces_finished = pieces_done;
         if let Some(backup) = backup {
-            log!(LogLevel::Debug, "{:?}", backup.pieces_tasks);
-            log!(LogLevel::Debug, "{:?}", backup.chunks_tasks);
-            // For each piece marking done pieces
-            log!(
-                LogLevel::Debug,
-                "{:?}\n{:?}",
-                backup.pieces_tasks,
-                backup.chunks_tasks
-            );
             for p_task in backup.pieces_tasks {
                 pieces_chunks.insert(
                     p_task.piece_i as u64,
@@ -177,7 +168,6 @@ pub fn spawn_saver(
                 }
             }
             pieces_finished = torrent.info.piece_hashes.len() - pieces_chunks.keys().len();
-            log!(LogLevel::Debug, "{:?}", pieces_chunks);
         }
 
         loop {

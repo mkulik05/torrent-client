@@ -15,6 +15,7 @@ use super::peers::Peer;
 use super::torrent::Torrent;
 use super::DownloadEvents;
 
+#[derive(Clone)]
 pub struct TrackerReq {
     pub info_hash: Vec<u8>,
     pub peer_id: String,
@@ -53,7 +54,82 @@ impl TrackerReq {
             compact: 1,
         }
     }
-    pub async fn send(&self, tracker_url: &String) -> anyhow::Result<TrackerResp> {
+
+    pub async fn discover_peers(
+        &self,
+        torrent: Arc<Torrent>,
+        event_sender: Sender<DownloadEvents>,
+        data_sender: Sender<DataPiece>,
+    ) -> Vec<JoinHandle<()>> {
+        let mut handles = Vec::new();
+        let max_attempts = 5;
+        if let Some(trackers) = &torrent.tracker_urls {
+            for tracker in trackers {
+                handles.push(self.spawn_tracker_task(
+                    tracker,
+                    max_attempts,
+                    event_sender.clone(),
+                    data_sender.clone(),
+                ));
+                break;
+            }
+        } else {
+            handles.push(self.spawn_tracker_task(
+                &torrent.tracker_url,
+                max_attempts,
+                event_sender,
+                data_sender,
+            ));
+        }
+        handles
+    }
+
+    fn spawn_tracker_task(
+        &self,
+        tracker_url: &String,
+        max_attempts: usize,
+        event_sender: Sender<DownloadEvents>,
+        data_sender: Sender<DataPiece>,
+    ) -> JoinHandle<()> {
+        let req = (*self).clone();
+        let tracker_url = tracker_url.clone();
+        tokio::spawn(async move {
+            let mut attempts_n = 0;
+            let mut tracker_resp = None;
+            while attempts_n < max_attempts {
+                match req.clone().clone().send(&tracker_url).await {
+                    Ok(resp) => {
+                        tracker_resp = Some(resp);
+                        break;
+                    }
+                    Err(_) => {
+                        log!(LogLevel::Info, "Failed tracker: {tracker_url}");
+                        attempts_n += 1;
+                    }
+                }
+            }
+            log!(LogLevel::Info, "Got response {:?}", tracker_resp);
+            if let Some(resp) = tracker_resp {
+                for peer in resp.peers {
+                    let data_sender = data_sender.clone();
+                    let event_sender = event_sender.clone();
+                    tokio::spawn(async move {
+                        if let Ok(peer) =
+                            Peer::new(&peer, data_sender.clone(), Duration::from_secs(2)).await
+                        {
+                            log!(LogLevel::Info, "ok peer {:?}", peer.peer_addr);
+                            event_sender
+                                .send(DownloadEvents::PeerAdd(peer, true))
+                                .await
+                                .unwrap();
+                        }
+                    });
+                }
+            }
+        })
+    }
+
+    async fn send(&self, tracker_url: &String) -> anyhow::Result<TrackerResp> {
         log!(LogLevel::Info, "{tracker_url}");
         if tracker_url.starts_with("udp://") {
             return self.send_udp(tracker_url).await;
@@ -123,20 +199,20 @@ impl TrackerReq {
         const MAX_RETRIES: usize = 20;
         let mut timeout_ms: u64 = 100; // Timeout duration in seconds
         let mut retries = 0;
-    
+
         loop {
             if retries >= MAX_RETRIES {
                 return Err(anyhow::anyhow!("Max retries exceeded"));
             }
-    
+
             let connection_id: u64 = 0x41727101980;
             let action_connect: u32 = 0;
             let action_announce: u32 = 1;
             let transaction_id: u32 = rand::random();
-    
+
             // Create UDP socket
             let socket = UdpSocket::bind("0.0.0.0:0")?;
-    
+
             // Connect to tracker
             socket.connect(tracker_url.strip_prefix("udp://").unwrap())?;
             let connect_packet = concat_slices![
@@ -144,36 +220,38 @@ impl TrackerReq {
                 &action_connect.to_be_bytes(),
                 &transaction_id.to_be_bytes()
             ];
-    
+
             socket.send(&connect_packet)?;
-                
+
             // Set read timeout
             socket.set_read_timeout(Some(Duration::from_millis(timeout_ms)))?;
 
             // Receive response
             let mut buf = [0u8; 1024];
             match socket.recv_from(&mut buf) {
-                
                 Ok((bytes_read, _)) if bytes_read < 16 => {
                     anyhow::bail!("Invalid response received");
                 }
                 Ok((bytes_read, _)) => {
-                    let received_transaction_id = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
+                    let received_transaction_id =
+                        u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
                     let received_action = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
-                    if received_transaction_id != transaction_id || received_action != action_connect {
+                    if received_transaction_id != transaction_id
+                        || received_action != action_connect
+                    {
                         anyhow::bail!("Invalid response received");
                     }
                     let received_connection_id = u64::from_be_bytes([
                         buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15],
                     ]);
-    
+
                     log!(
                         LogLevel::Info,
                         "{} {:?}",
                         received_connection_id,
                         &self.info_hash
                     );
-    
+
                     // Announce
                     let announce_packet = concat_slices![
                         &received_connection_id.to_be_bytes(),
@@ -191,24 +269,23 @@ impl TrackerReq {
                         &6881u16.to_be_bytes()  // Port
                     ];
                     socket.send(&announce_packet)?;
-    
+
                     // Receive announce response
                     match socket.recv_from(&mut buf) {
                         Ok((bytes_read, _)) if bytes_read < 20 => {
                             anyhow::bail!("Invalid announce response received");
                         }
                         Ok((bytes_read, _)) => {
-                            let received_transaction_id = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
-                            let received_action = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
-                            if received_transaction_id != transaction_id || received_action != action_announce {
+                            let received_transaction_id =
+                                u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
+                            let received_action =
+                                u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+                            if received_transaction_id != transaction_id
+                                || received_action != action_announce
+                            {
                                 anyhow::bail!("Invalid announce response received");
                             }
                             let interval = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
-                            // Parse peers
-    
-                            log!(LogLevel::Info, "{bytes_read} {:?}", &buf[..bytes_read]);
-    
-    
                             let mut peers = Vec::new();
                             let mut offset = 20;
                             while offset + 6 < bytes_read {
@@ -245,32 +322,5 @@ impl TrackerReq {
                 }
             }
         }
-    }
-    
-}
-
-impl TrackerResp {
-    // Discover task - found working peers, sep task for each peer check
-    pub fn find_working_peers(
-        self: Arc<Self>,
-        send_data: Sender<DataPiece>,
-        send_status: Sender<DownloadEvents>,
-    ) -> Vec<JoinHandle<()>> {
-        let mut handles = Vec::new();
-        for peer in self.peers.clone() {
-            let send_data = send_data.clone();
-            let send_status = send_status.clone();
-            let handle = tokio::spawn(async move {
-                if let Ok(peer) = Peer::new(&peer, send_data.clone(), Duration::from_secs(2)).await
-                {
-                    send_status
-                        .send(DownloadEvents::PeerAdd(peer))
-                        .await
-                        .unwrap();
-                }
-            });
-            handles.push(handle);
-        }
-        handles
     }
 }

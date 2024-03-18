@@ -54,7 +54,7 @@ impl DownloadReq {
                             log!(LogLevel::Debug, "Reconnected to peer");
                         } else {
                             error_sender
-                                .send(DownloadEvents::PeerAdd(self.peer))
+                                .send(DownloadEvents::PeerAdd(self.peer, false))
                                 .await?;
                             anyhow::bail!("Peer error: {}", e);
                         }
@@ -69,11 +69,11 @@ impl DownloadReq {
                             None => {
                                 if e.to_string() != "Failed to unchoke peer" {
                                     error_sender
-                                        .send(DownloadEvents::PeerAdd(self.peer))
+                                        .send(DownloadEvents::PeerAdd(self.peer, false))
                                         .await?;
                                     anyhow::bail!("Unknown peer error: {}", e);
                                 } else {
-                                    anyhow::bail!("Peer: {} is removed", self.peer.peer_addr);
+                                    anyhow::bail!("Peer: {} is removed {e}", self.peer.peer_addr);
                                 }
                             }
                         };
@@ -121,14 +121,14 @@ impl DownloadReq {
                             log!(LogLevel::Debug, "Reconnected to peer");
                         } else {
                             error_sender
-                                .send(DownloadEvents::PeerAdd(self.peer))
+                                .send(DownloadEvents::PeerAdd(self.peer, false))
                                 .await?;
                             anyhow::bail!("Peer error: {}", e)
                         }
                     }
                     None => {
                         error_sender
-                            .send(DownloadEvents::PeerAdd(self.peer))
+                            .send(DownloadEvents::PeerAdd(self.peer, false))
                             .await?;
                         anyhow::bail!("Peer error: {}", e);
                     }
@@ -179,7 +179,7 @@ impl DownloadReq {
         }
         log!(LogLevel::Debug, "Got to peer add sender");
         error_sender
-            .send(DownloadEvents::PeerAdd(self.peer))
+            .send(DownloadEvents::PeerAdd(self.peer, false))
             .await?;
         log!(LogLevel::Debug, "Passed it");
         Ok(())

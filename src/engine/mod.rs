@@ -32,7 +32,7 @@ pub enum DownloadEvents {
     ChunksFail(ChunksTask),
     InvalidHash(u64),
     Finished,
-    PeerAdd(Peer),
+    PeerAdd(Peer, bool),
 }
 
 pub fn parse_torrent(torrent_path: &str) -> anyhow::Result<Torrent> {
@@ -43,6 +43,7 @@ pub fn parse_torrent(torrent_path: &str) -> anyhow::Result<Torrent> {
 struct DownloaderInfo {
     handle: Option<JoinHandle<()>>,
     task: ChunksTask,
+    peer_addr: String
 }
 
 // Represents peer lifecycle in peers array
@@ -93,37 +94,17 @@ pub async fn download_torrent(
 
     let save_path = save_path.to_str().unwrap();
     let tracker_req = TrackerReq::init(&torrent);
-    let mut n = 0;
-    let max_n = if let Some(urls) = &torrent.tracker_urls {
-        urls.len()
-    } else {
-        3
-    };
-    let mut tracker_resp = tracker_req.send(&torrent.tracker_url).await;
-    while let Err(ref e) = tracker_resp {
-        log!(LogLevel::Error, "Tracker request failed: {e}");
 
-        if n >= max_n {
-            anyhow::bail!("Failed to connect to tracker");
-        }
-        if let Some(urls) = &torrent.tracker_urls {
-            tracker_resp = tracker_req.send(&urls[n]).await;
-        } else {
-            tracker_resp = tracker_req.send(&torrent.tracker_url).await;
-        }
-        n += 1;
-    }
-    let tracker_resp = Arc::new(tracker_resp.unwrap());
     let torrent = Arc::new(torrent);
     let (send_status, mut get_status) = mpsc::channel(270);
     let (send_data, get_data) = mpsc::channel::<DataPiece>(50);
+
+    // Requesting peers from trackers and sending through channel mg PeerAdd
+    let mut peer_discovery_handles = tracker_req
+        .discover_peers(torrent.clone(), send_status.clone(), send_data.clone())
+        .await;
+
     let mut peers: Vec<DownloaderPeer> = Vec::new();
-
-    // tokio task spawns inside
-    let peer_discovery_handles = tracker_resp
-        .clone()
-        .find_working_peers(send_data.clone(), send_status.clone());
-
     let pieces_done = if let TorrentInfo::Torrent(_) = torrent_info {
         Some(saver::find_downloaded_pieces(torrent.clone(), save_path, ui_handle.clone()).await)
     } else {
@@ -207,9 +188,7 @@ pub async fn download_torrent(
             tokio::select! {
                 _ = time => {
                     log!(LogLevel::Info, "Started peer search");
-                    tracker_resp
-                        .clone()
-                        .find_working_peers(send_data.clone(), send_status.clone());
+                    peer_discovery_handles = tracker_req.discover_peers(torrent.clone(), send_status.clone(), send_data.clone()).await;
                     continue;
                 }
                 res = get_status.recv() => {
@@ -221,7 +200,8 @@ pub async fn download_torrent(
                     for peer in peers {
                         if let DownloaderPeer::Busy(DownloaderInfo {
                             handle: Some(handle),
-                            task
+                            task,
+                            ..
                         }) = peer
                         {
                             log!(LogLevel::Fatal, "Returned chunk task: {:?}", task);
@@ -281,6 +261,7 @@ pub async fn download_torrent(
                             if let DownloaderPeer::Busy(DownloaderInfo {
                                 handle: Some(handle),
                                 task,
+                                ..
                             }) = peer
                             {
                                 log!(LogLevel::Fatal, "Returned chunk 22 task: {:?}", task);
@@ -289,18 +270,20 @@ pub async fn download_torrent(
                                 handle.abort();
                             }
                         }
-                        Backup::global().backup_torrent(TorrentBackupInfo {
-                            pieces_tasks,
-                            chunks_tasks,
-                            torrent: Arc::as_ref(&torrent).clone(),
-                            save_path: save_path.to_string(),
-                            pieces_done: done as usize,
-                            status: if let UiMsg::Pause(_) = msg {
-                                DownloadStatus::Paused
-                            } else {
-                                DownloadStatus::Downloading
-                            },
-                        }).await?;
+                        Backup::global()
+                            .backup_torrent(TorrentBackupInfo {
+                                pieces_tasks,
+                                chunks_tasks,
+                                torrent: Arc::as_ref(&torrent).clone(),
+                                save_path: save_path.to_string(),
+                                pieces_done: done as usize,
+                                status: if let UiMsg::Pause(_) = msg {
+                                    DownloadStatus::Paused
+                                } else {
+                                    DownloadStatus::Downloading
+                                },
+                            })
+                            .await?;
                         saver_cancel.cancel();
                         let _ = saver_task.await;
                         log!(LogLevel::Info, "Saver is gone");
@@ -344,7 +327,24 @@ pub async fn download_torrent(
                     log!(LogLevel::Debug, "chunk failed: {:?}", chunk);
                     chunks_tasks.push_front(chunk);
                 }
-                DownloadEvents::PeerAdd(peer) => {
+                DownloadEvents::PeerAdd(peer, discovered) => {
+                    
+                    // skipping if peer exists already
+                    if discovered && peers.iter().position(|x| {
+                        match x {
+                            DownloaderPeer::Busy(info) => {
+                                info.peer_addr == peer.peer_addr
+                            },
+                            DownloaderPeer::Free(arr_peer) => {
+                                peer.peer_addr == arr_peer.peer_addr
+                            },
+                            _ => {false}
+                        }
+                    }).is_some() {
+                        log!(LogLevel::Info, "Continue:^(");
+                        continue
+                    }
+                    
                     wait_for_channel_msg = false;
 
                     // Checking did peer task finished or not
@@ -399,7 +399,9 @@ pub async fn download_torrent(
             let peer_i = {
                 let mut ok_peer_i = None;
                 for i in &free_poses {
-                    let DownloaderPeer::Free(ref mut peer) = peers[*i] else {continue};
+                    let DownloaderPeer::Free(ref mut peer) = peers[*i] else {
+                        continue;
+                    };
                     if peer.have_piece(task.piece_i as usize) {
                         ok_peer_i = Some(*i);
                         break;
@@ -408,17 +410,24 @@ pub async fn download_torrent(
                 if let Some(i) = ok_peer_i {
                     i
                 } else {
-                    log!(LogLevel::Debug, "No peers that have this piece, skipping iteration");
+                    log!(
+                        LogLevel::Debug,
+                        "No peers that have this piece, skipping iteration"
+                    );
                     wait_for_channel_msg = true;
                     chunks_tasks.push_front(task);
                     continue;
-                } 
+                }
             };
+            
+            let DownloaderPeer::Free(peer) = &peers[peer_i] else {panic!("Not possible")};
+            let peer_addr = peer.peer_addr.clone();
             let DownloaderPeer::Free(peer) = std::mem::replace(
                 &mut peers[peer_i],
                 DownloaderPeer::Busy(DownloaderInfo {
                     handle: None,
                     task: task.clone(),
+                    peer_addr
                 }),
             ) else {
                 panic!("not possible, we checked it")
