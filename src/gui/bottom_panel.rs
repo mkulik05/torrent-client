@@ -113,29 +113,28 @@ impl MyApp {
                             cols[0].label("Files");
                             cols[0].group(|ui| {
                                 egui::ScrollArea::vertical()
-                                        .id_source("Files hierarchy")
-                                        .max_height(ui.available_height() / 1.3)
-                                        .auto_shrink(false)
-                                        .show(ui, |ui| {
-                                            if let Some(i) = self.selected_row {
-                                                let torrent = &self.torrents[i].torrent;
-                                                if let Some(files) = &torrent.info.files {
-                                                    draw_tree(
-                                                        &files
-                                                            .iter()
-                                                            .map(|x| x.path.as_str())
-                                                            .collect(),
-                                                        torrent.info.name.clone(),
-                                                        ui,
-                                                    )
-                                                } else {
-                                                    ui.label(&torrent.info.name);
-                                                }
+                                    .id_source("Files hierarchy")
+                                    .max_height(ui.available_height() / 1.3)
+                                    .auto_shrink(false)
+                                    .show(ui, |ui| {
+                                        if let Some(i) = self.selected_row {
+                                            let torrent = &self.torrents[i].torrent;
+                                            if let Some(files) = &torrent.info.files {
+                                                draw_tree(
+                                                    &files
+                                                        .iter()
+                                                        .map(|x| x.path.as_str())
+                                                        .collect(),
+                                                    torrent.info.name.clone(),
+                                                    ui,
+                                                )
                                             } else {
-                                                ui.label("");
+                                                ui.label(&torrent.info.name);
                                             }
-                                        });
-
+                                        } else {
+                                            ui.label("");
+                                        }
+                                    });
                             });
                             cols[1].label("Peers");
                             cols[1].group(|ui| {

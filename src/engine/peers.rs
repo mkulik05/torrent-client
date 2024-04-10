@@ -173,7 +173,7 @@ impl Peer {
                         for _ in 0..(bit_n - 1) {
                             mask >>= 1;
                         }
-                        let mut bitfield = vec![0u8; bitfield_i as usize];
+                        let mut bitfield = vec![0u8; (bitfield_i + 1) as usize];
                         bitfield[bitfield_i as usize] |= mask;
                         self.bitfield = Some(bitfield);
                     }
