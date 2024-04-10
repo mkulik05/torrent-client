@@ -136,6 +136,7 @@ impl Default for MyApp {
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         
+        ctx.set_zoom_factor(1.5);
         if !self.inited {
             self.init(ctx);
         }

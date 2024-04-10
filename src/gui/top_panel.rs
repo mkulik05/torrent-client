@@ -1,3 +1,5 @@
+use egui::Ui;
+
 use crate::engine::parse_torrent;
 use crate::gui::{DownloadStatus, MyApp};
 impl MyApp {
@@ -35,33 +37,15 @@ impl MyApp {
                             }
                         }
                     });
-                    ui.menu_button("Edit", |ui| {});
+                    ui.menu_button("Edit", |ui| {
+                        self.torrent_actions(ui, ctx);
+                    });
                     ui.button("Settigns");
                 });
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.set_enabled(self.selected_row.is_some());
-
-                        if ui.button("Pause").clicked() {
-                            if let DownloadStatus::Downloading | DownloadStatus::Error(_) =
-                                self.torrents[self.selected_row.unwrap()].status
-                            {
-                                self.pause_torrent(self.selected_row.unwrap());
-                            }
-                        }
-                        if ui.button("Resume").clicked() {
-                            if let DownloadStatus::Paused | DownloadStatus::Error(_) =
-                                self.torrents[self.selected_row.unwrap()].status
-                            {
-                                self.resume_torrent(self.selected_row.unwrap(), ctx);
-                            }
-                        }
-                        if ui.button("Delete").clicked() {
-                            self.delete_torrent(self.selected_row.unwrap());
-                        }
-                    });
+                    self.torrent_actions(ui, ctx);
                     ui.separator();
                     ui.horizontal(|ui| {
                         if ui.button("Pause All").clicked() {
@@ -89,5 +73,26 @@ impl MyApp {
                     });
                 });
             });
+    }
+    fn torrent_actions(&mut self, ui: &mut Ui, ctx: &egui::Context) {
+        ui.set_enabled(self.selected_row.is_some());
+
+        if ui.button("Pause").clicked() {
+            if let DownloadStatus::Downloading | DownloadStatus::Error(_) =
+                self.torrents[self.selected_row.unwrap()].status
+            {
+                self.pause_torrent(self.selected_row.unwrap());
+            }
+        }
+        if ui.button("Resume").clicked() {
+            if let DownloadStatus::Paused | DownloadStatus::Error(_) =
+                self.torrents[self.selected_row.unwrap()].status
+            {
+                self.resume_torrent(self.selected_row.unwrap(), ctx);
+            }
+        }
+        if ui.button("Delete").clicked() {
+            self.delete_torrent(self.selected_row.unwrap());
+        }
     }
 }
