@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Semaphore, TryAcquireError};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -43,7 +43,7 @@ pub fn parse_torrent(torrent_path: &str) -> anyhow::Result<Torrent> {
 struct DownloaderInfo {
     handle: Option<JoinHandle<()>>,
     task: ChunksTask,
-    peer_addr: String
+    peer_addr: String,
 }
 
 // Represents peer lifecycle in peers array
@@ -168,6 +168,7 @@ pub async fn download_torrent(
         return Ok(());
     }
 
+    let semaphore = Arc::new(Semaphore::new(50));
     let mut wait_for_channel_msg = false;
     let mut ui_reader = ui_handle.ui_sender.subscribe();
     loop {
@@ -328,26 +329,27 @@ pub async fn download_torrent(
                     chunks_tasks.push_front(chunk);
                 }
                 DownloadEvents::PeerAdd(peer, discovered) => {
-                    
                     // skipping if peer exists already
                     if discovered {
-                        ui_handle.send_with_update(UiMsg::PeerDiscovered(peer.peer_addr.clone()))?;
+                        ui_handle
+                            .send_with_update(UiMsg::PeerDiscovered(peer.peer_addr.clone()))?;
                     }
-                    if discovered && peers.iter().position(|x| {
-                        match x {
-                            DownloaderPeer::Busy(info) => {
-                                info.peer_addr == peer.peer_addr
-                            },
-                            DownloaderPeer::Free(arr_peer) => {
-                                peer.peer_addr == arr_peer.peer_addr
-                            },
-                            _ => {false}
-                        }
-                    }).is_some() {
+                    if discovered
+                        && peers
+                            .iter()
+                            .position(|x| match x {
+                                DownloaderPeer::Busy(info) => info.peer_addr == peer.peer_addr,
+                                DownloaderPeer::Free(arr_peer) => {
+                                    peer.peer_addr == arr_peer.peer_addr
+                                }
+                                _ => false,
+                            })
+                            .is_some()
+                    {
                         log!(LogLevel::Info, "Continue:^(");
-                        continue
+                        continue;
                     }
-                    
+
                     wait_for_channel_msg = false;
 
                     // Checking did peer task finished or not
@@ -392,12 +394,19 @@ pub async fn download_torrent(
                 }
             }
 
-            log!(LogLevel::Debug, "{:?} {:?}", free_poses, peers);
             if free_poses.is_empty() {
                 log!(LogLevel::Debug, "No free peers, skipping iteration");
                 wait_for_channel_msg = true;
                 continue;
             }
+
+            let continue_permit = semaphore.clone().try_acquire_owned();
+            let continue_permit = if let Ok(p) = continue_permit {
+                p
+            } else {
+                continue;
+            };
+
             let task = chunks_tasks.pop_front().unwrap();
             let peer_i = {
                 let mut ok_peer_i = None;
@@ -422,15 +431,17 @@ pub async fn download_torrent(
                     continue;
                 }
             };
-            
-            let DownloaderPeer::Free(peer) = &peers[peer_i] else {panic!("Not possible")};
+
+            let DownloaderPeer::Free(peer) = &peers[peer_i] else {
+                panic!("Not possible")
+            };
             let peer_addr = peer.peer_addr.clone();
             let DownloaderPeer::Free(peer) = std::mem::replace(
                 &mut peers[peer_i],
                 DownloaderPeer::Busy(DownloaderInfo {
                     handle: None,
                     task: task.clone(),
-                    peer_addr
+                    peer_addr,
                 }),
             ) else {
                 panic!("not possible, we checked it")
@@ -446,6 +457,7 @@ pub async fn download_torrent(
                 let task = downloader.task.clone();
                 let addr = downloader.peer.peer_addr.clone();
                 let send_status2 = send_status.clone();
+                drop(continue_permit);
                 if let Err(e) = downloader.request_data(send_status).await {
                     log!(
                         LogLevel::Error,
