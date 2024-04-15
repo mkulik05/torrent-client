@@ -24,8 +24,9 @@ macro_rules! label {
 
 impl MyApp {
     pub fn bottom_panel(&mut self, ctx: &egui::Context) {
+        let height = ctx.available_rect().height();
         egui::TopBottomPanel::bottom("bottom_panel")
-            .default_height(200.0)
+            .default_height(height / 2.0)
             .resizable(true)
             .show(ctx, |ui| {
                 ui.set_enabled(!self.import_opened);
