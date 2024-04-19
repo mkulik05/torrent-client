@@ -14,6 +14,7 @@ use crate::engine::{
     torrent::Torrent,
 };
 use eframe::egui;
+use egui::{Key, Modifiers};
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -116,6 +117,7 @@ pub struct MyApp {
     import_dest_dir: String,
     import_torrent: Option<Torrent>,
     torrent_to_delete: Option<usize>,
+    zoom: f32,
     peer_id: String,
 }
 
@@ -132,6 +134,7 @@ impl Default for MyApp {
             import_dest_dir: String::new(),
             import_torrent: None,
             torrent_to_delete: None,
+            zoom: 1.0,
             peer_id: Alphanumeric.sample_string(&mut rand::thread_rng(), 20),
         }
     }
@@ -139,11 +142,13 @@ impl Default for MyApp {
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.handle_keys(ctx);
+        ctx.set_zoom_factor(self.zoom);
         
-        ctx.set_zoom_factor(1.5);
         if !self.inited {
             self.init(ctx);
         }
+        
         if self.import_opened {
             self.import_window(ctx);            
         }
@@ -230,6 +235,18 @@ impl MyApp {
             }
         });
     }
+
+    fn handle_keys(&mut self, ctx: &egui::Context) {
+        let input = ctx.input(|input| input.clone());
+        if input.modifiers.contains(Modifiers::CTRL) {
+            if input.key_pressed(egui::Key::Plus) {
+                self.zoom += 0.1;
+            } else if input.key_pressed(egui::Key::Minus) {
+                self.zoom -= 0.1;
+            }
+        }
+    }
+
     fn show_message(&mut self, ctx: &egui::Context) {
         let Some((header, msg)) = self.user_msg.clone() else {
             return;

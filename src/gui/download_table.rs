@@ -4,12 +4,13 @@ use egui::Color32;
 use egui_extras::{Column, TableBuilder};
 impl MyApp {
     pub fn draw_table(&mut self, ui: &mut Ui, ctx: &egui::Context) {
+        let width = ui.available_width();
         let mut table = TableBuilder::new(ui)
             .striped(true)
             .resizable(true)
             .auto_shrink(false)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::auto().clip(true))
+            .column(Column::auto().clip(true).at_least(width / 3.0))
             .column(Column::auto())
             .column(Column::auto())
             .column(Column::initial(100.0).at_least(40.0).clip(true))
