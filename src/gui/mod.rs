@@ -23,6 +23,7 @@ use tokio::{
     task::JoinHandle,
 };
 
+
 pub fn start_gui() -> anyhow::Result<()> {
     let icon = include_bytes!("../../folder-download.png");
     let image = image::load_from_memory(icon).expect("Failuse to load image").to_rgba8();
@@ -103,7 +104,7 @@ struct TorrentDownload {
     peers: Vec<String>,
     torrent: Torrent,
     pieces_done: u32,
-    save_dir: String
+    save_dir: String,
 }
 
 pub struct MyApp {
@@ -114,12 +115,14 @@ pub struct MyApp {
     import_opened: bool,
     import_dest_dir: String,
     import_torrent: Option<Torrent>,
-    torrent_to_delete: Option<usize>
+    torrent_to_delete: Option<usize>,
+    peer_id: String,
 }
 
 
 impl Default for MyApp {
     fn default() -> Self {
+        use rand::distributions::{Alphanumeric, DistString};
         Self {
             torrents: Vec::new(),
             selected_row: None,
@@ -129,6 +132,7 @@ impl Default for MyApp {
             import_dest_dir: String::new(),
             import_torrent: None,
             torrent_to_delete: None,
+            peer_id: Alphanumeric.sample_string(&mut rand::thread_rng(), 20),
         }
     }
 }
@@ -198,7 +202,7 @@ impl eframe::App for MyApp {
 impl MyApp {
     fn init(&mut self, ctx: &egui::Context) {
         self.inited = true;
-        Backup::init();
+        Backup::init().expect("Saver does not work");
         match async_std::task::block_on(Backup::global().load_config()) {
             Ok(backups) => {
                 for backup in backups {

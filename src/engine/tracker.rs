@@ -1,5 +1,5 @@
 use std::fmt::Write;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::UdpSocket;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -43,10 +43,10 @@ macro_rules! concat_slices {
 }
 
 impl TrackerReq {
-    pub fn init(torrent: &Torrent) -> Self {
+    pub fn init(torrent: &Torrent, peer_id: String) -> Self {
         TrackerReq {
             info_hash: torrent.info_hash.clone(),
-            peer_id: Alphanumeric.sample_string(&mut rand::thread_rng(), 20),
+            peer_id,
             port: 6681,
             uploaded: 0,
             downloaded: 0,
@@ -92,6 +92,7 @@ impl TrackerReq {
     ) -> JoinHandle<()> {
         let req = (*self).clone();
         let tracker_url = tracker_url.clone();
+        let peer_id = self.peer_id.clone();
         tokio::spawn(async move {
             let mut attempts_n = 0;
             let mut tracker_resp = None;
@@ -112,9 +113,10 @@ impl TrackerReq {
                 for peer in resp.peers {
                     let data_sender = data_sender.clone();
                     let event_sender = event_sender.clone();
+                    let peer_id = peer_id.clone();
                     tokio::spawn(async move {
                         if let Ok(peer) =
-                            Peer::new(&peer, data_sender.clone(), Duration::from_secs(2)).await
+                            Peer::new(&peer, data_sender.clone(), peer_id, Duration::from_secs(2) ).await
                         {
                             log!(LogLevel::Info, "ok peer {:?}", peer.peer_addr);
                             event_sender
@@ -128,7 +130,7 @@ impl TrackerReq {
         })
     }
 
-    async fn send(&self, tracker_url: &String) -> anyhow::Result<TrackerResp> {
+    pub async fn send(&self, tracker_url: &String) -> anyhow::Result<TrackerResp> {
         log!(LogLevel::Info, "{tracker_url}");
         if tracker_url.starts_with("udp://") {
             return self.send_udp(tracker_url).await;

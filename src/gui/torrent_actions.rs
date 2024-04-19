@@ -35,6 +35,7 @@ impl MyApp {
             let folder = folder.clone();
             let name = torrent.info.name.clone();
             let sender = sender.clone();
+            let peer_id = self.peer_id.clone();
             let ctx = ctx.clone();
             tokio::spawn(async move {
                 log!(LogLevel::Info, "Strating torrent downloading: {name}");
@@ -42,7 +43,7 @@ impl MyApp {
                     ui_sender: sender,
                     ctx,
                 };
-                if let Err(e) = download_torrent(torrent_info, &folder, ui_handle.clone()).await {
+                if let Err(e) = download_torrent(torrent_info, &folder, ui_handle.clone(), peer_id).await {
                     log!(LogLevel::Fatal, "Failed to download torrent: {e}");
                     ui_handle
                         .send_with_update(UiMsg::TorrentErr(e.to_string()))

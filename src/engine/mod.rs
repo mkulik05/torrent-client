@@ -26,6 +26,7 @@ mod peers;
 mod saver;
 pub mod torrent;
 mod tracker;
+pub mod tracker_sync;
 
 #[derive(Debug)]
 pub enum DownloadEvents {
@@ -68,6 +69,7 @@ pub async fn download_torrent(
     torrent_info: TorrentInfo,
     path: &str,
     ui_handle: UiHandle,
+    peer_id: String
 ) -> anyhow::Result<()> {
     let torrent = match torrent_info {
         TorrentInfo::Torrent(ref torrent) => torrent.clone(),
@@ -93,7 +95,7 @@ pub async fn download_torrent(
     };
 
     let save_path = save_path.to_str().unwrap();
-    let tracker_req = TrackerReq::init(&torrent);
+    let tracker_req = TrackerReq::init(&torrent, peer_id);
 
     let torrent = Arc::new(torrent);
     let (send_status, mut get_status) = mpsc::channel(270);

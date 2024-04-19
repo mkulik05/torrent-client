@@ -15,6 +15,7 @@ const MAX_INTERESTED_ATTEMPTS: u8 = 3;
 #[derive(Debug)]
 pub struct Peer {
     pub peer_id: Option<String>,
+    pub self_peer_id: String,
     pub peer_addr: String,
     // can be shorter than it should
     // in case received have request instead of bitfield msg
@@ -67,6 +68,7 @@ impl Peer {
     pub async fn new(
         addr: &str,
         data_sender: Sender<DataPiece>,
+        peer_id: String,
         dur: Duration,
     ) -> anyhow::Result<Peer> {
         let socket = match timeout(dur, TcpStream::connect(addr)).await {
@@ -76,6 +78,7 @@ impl Peer {
         Ok(Peer {
             peer_id: None,
             peer_addr: addr.to_owned(),
+            self_peer_id: peer_id,
             socket,
             data_sender,
             bitfield: None,
@@ -313,7 +316,7 @@ impl Peer {
         msg.extend_from_slice(b"BitTorrent protocol");
         msg.extend_from_slice(&[0; 8]);
         msg.extend_from_slice(&torrent.info_hash);
-        msg.extend_from_slice(b"00112353448866770099");
+        msg.extend_from_slice(&self.self_peer_id.as_bytes());
         self.socket.write_all(&msg).await?;
         log!(LogLevel::Debug, "Sended handskake");
         let mut response = [0; 68];
