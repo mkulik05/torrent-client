@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, Semaphore, TryAcquireError};
+use tokio::sync::{mpsc, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -17,6 +17,7 @@ use tracker::TrackerReq;
 use self::download::tasks::CHUNK_SIZE;
 use self::download::DataPiece;
 use crate::logger::{log, LogLevel};
+use crate::engine::torrent::PieceBitmap;
 
 pub mod backup;
 mod bencode;
@@ -26,12 +27,12 @@ mod peers;
 mod saver;
 pub mod torrent;
 mod tracker;
-pub mod tracker_sync;
 
 #[derive(Debug)]
 pub enum DownloadEvents {
     ChunksFail(ChunksTask),
     InvalidHash(u64),
+    PieceComplete(usize),
     Finished,
     PeerAdd(Peer, bool),
 }
@@ -65,6 +66,7 @@ pub enum TorrentInfo {
     Backup(TorrentBackupInfo),
 }
 
+
 pub async fn download_torrent(
     torrent_info: TorrentInfo,
     path: &str,
@@ -79,7 +81,6 @@ pub async fn download_torrent(
     if torrent.info.piece_hashes.len() > u16::MAX as usize {
         anyhow::bail!("Too many pieces");
     }
-
     if torrent.info.piece_length / CHUNK_SIZE > u16::MAX as u64 {
         anyhow::bail!("Too many chunks");
     }
@@ -124,7 +125,7 @@ pub async fn download_torrent(
 
     match torrent_info {
         TorrentInfo::Torrent(_) => {
-            pieces_tasks = download::tasks::get_piece_tasks(torrent.clone(), pieces_done.unwrap());
+            pieces_tasks = download::tasks::get_piece_tasks(torrent.clone(), pieces_done.clone().unwrap());
             chunks_tasks = VecDeque::new();
             download::tasks::add_chunks_tasks(
                 &mut pieces_tasks,
@@ -168,6 +169,16 @@ pub async fn download_torrent(
             handle.abort();
         }
         return Ok(());
+    }
+
+    
+
+    let mut bitmap = PieceBitmap::new(torrent.info.piece_hashes.len());
+    log!(LogLevel::Debug, "Lalalal {:?}", pieces_done);
+    if let Some(list) = &pieces_done {
+        for i in list {
+            bitmap.add(*i);
+        }
     }
 
     let semaphore = Arc::new(Semaphore::new(50));
@@ -304,6 +315,9 @@ pub async fn download_torrent(
         };
         if let Some(download_status) = download_status {
             match download_status {
+                DownloadEvents::PieceComplete(n) => {
+                    bitmap.add(n);
+                }
                 DownloadEvents::Finished => {
                     ui_handle.send_with_update(UiMsg::TorrentFinished).unwrap();
                     break;
@@ -330,9 +344,10 @@ pub async fn download_torrent(
                     log!(LogLevel::Debug, "chunk failed: {:?}", chunk);
                     chunks_tasks.push_front(chunk);
                 }
-                DownloadEvents::PeerAdd(peer, discovered) => {
+                DownloadEvents::PeerAdd(mut peer, discovered) => {
                     // skipping if peer exists already
                     if discovered {
+                        peer.own_bitfield = bitmap.clone();
                         ui_handle
                             .send_with_update(UiMsg::PeerDiscovered(peer.peer_addr.clone()))?;
                     }
@@ -374,6 +389,9 @@ pub async fn download_torrent(
                             false
                         }
                     });
+                    if !discovered {
+                        let _ = peer.sync_bitmaps(&bitmap).await;
+                    }
                     if let Some(i) = pos {
                         peers[i] = DownloaderPeer::Free(peer);
                     } else {

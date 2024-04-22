@@ -12,6 +12,8 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
+use once_cell::sync::OnceCell;
+use tokio::sync::RwLock;
 
 use crate::gui::TorrentBackupInfo;
 use crate::gui::{UiHandle, UiMsg};
@@ -26,6 +28,8 @@ struct PieceChunksBitmap {
     bitmap: Vec<u8>,
     last_chunk_mask: u8,
 }
+
+static INSTANCE: OnceCell<RwLock<u32>> = OnceCell::new();
 
 impl PieceChunksBitmap {
     fn new(torrent: &Torrent, piece_i: usize) -> Self {
@@ -167,6 +171,16 @@ pub fn spawn_saver(
                     bitmap.remove_chunk(CHUNK_SIZE as usize * c as usize);
                 }
             }
+
+            for i in 0..torrent.info.piece_hashes.len() {
+                if pieces_chunks.keys().position(|x| *x == i as u64).is_none() {
+                    send_status
+                        .send(DownloadEvents::PieceComplete(i))
+                        .await
+                        .unwrap();
+                }
+            }
+
             pieces_finished = torrent.info.piece_hashes.len() - pieces_chunks.keys().len();
         }
 
@@ -277,6 +291,10 @@ pub fn spawn_saver(
                             {
                                 log!(LogLevel::Error, "Failed to PieceDone msg");
                             }
+                            send_status
+                                .send(DownloadEvents::PieceComplete(data.piece_i as usize))
+                                .await
+                                .unwrap();
                             log!(
                                 LogLevel::Info,
                                 "Piece {} hash matched, downloaded: {}",

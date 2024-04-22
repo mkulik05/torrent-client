@@ -56,7 +56,7 @@ impl Logger {
     }
 
     pub fn add_log(&self, log_level: LogLevel, msg: &str) {
-        let timestamp = chrono::Local::now().format("[%d/%m/%Y %H:%M:%S]");
+        let timestamp = chrono::Local::now().format("[%d/%m/%Y %H:%M:%S%.6f]");
         let mut log_file = OpenOptions::new()
             .create(true)
             .append(true)

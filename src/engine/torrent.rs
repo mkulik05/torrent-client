@@ -8,6 +8,49 @@ use sha1::{Digest, Sha1};
 use super::bencode::BencodeValue;
 use super::logger::{LogLevel, log};
 
+
+#[derive(Debug, Clone)]
+pub struct PieceBitmap {
+    pieces_n: usize,
+    pub bitmap: Vec<u8>
+}
+
+impl PieceBitmap {
+    pub fn new(pieces_n: usize) -> Self {
+        PieceBitmap { pieces_n, bitmap: vec![0; (pieces_n as f64 / 8.0).ceil() as usize] }
+    }
+    pub fn add(&mut self, piece_i: usize) {
+        if piece_i > self.pieces_n {return}
+        let cell_i = piece_i as usize / 8;
+        let bit_i = piece_i % 8;
+        let mut mask = 0b1000_0000;
+        for _ in 0..bit_i {
+            mask >>= 1;
+        }
+        self.bitmap[cell_i] |= mask;
+    }
+    pub fn diff(&self, b2: &PieceBitmap) -> Vec<usize> {
+        let mut res = Vec::new();
+        if self.bitmap.len() != b2.bitmap.len() {
+            panic!("Length should be same")
+        }
+        for i in 0..self.bitmap.len() {
+            if self.bitmap[i] != b2.bitmap[i] {
+                let mut bits = self.bitmap[i] ^ b2.bitmap[i];
+                for j in 0..8 {
+                    if i * 8 + j > self.pieces_n {break}
+                    if bits & 0b0000_0001 != 0 {
+                        res.push(i * 8 + j);
+                    }
+                    bits >>= 1;
+                }
+            }
+        }
+        res 
+    }
+}
+
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TorrentFile {
     pub length: u64,

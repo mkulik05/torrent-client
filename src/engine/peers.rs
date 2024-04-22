@@ -9,17 +9,19 @@ use super::download::DataPiece;
 use super::logger::{LogLevel, log};
 use super::torrent::Torrent;
 use async_recursion::async_recursion;
+use crate::engine::torrent::PieceBitmap;
 
 const MAX_INTERESTED_ATTEMPTS: u8 = 3;
 
 #[derive(Debug)]
 pub struct Peer {
     pub peer_id: Option<String>,
-    pub self_peer_id: String,
+    pub my_peer_id: String,
     pub peer_addr: String,
     // can be shorter than it should
     // in case received have request instead of bitfield msg
-    pub bitfield: Option<Vec<u8>>,
+    pub peer_bitfield: Option<Vec<u8>>,
+    pub own_bitfield: PieceBitmap,
     pub data_sender: Sender<DataPiece>,
     pub status: PeerStatus,
     pub socket: TcpStream,
@@ -78,10 +80,11 @@ impl Peer {
         Ok(Peer {
             peer_id: None,
             peer_addr: addr.to_owned(),
-            self_peer_id: peer_id,
+            my_peer_id: peer_id,
             socket,
             data_sender,
-            bitfield: None,
+            peer_bitfield: None,
+            own_bitfield: PieceBitmap::new(1),
             status: PeerStatus::NotConnected,
         })
     }
@@ -96,7 +99,7 @@ impl Peer {
     }
 
     #[async_recursion]
-    pub async fn connect(&mut self, torrent: &Torrent) -> anyhow::Result<()> {
+    pub async fn connect(&mut self, torrent: &Torrent) -> anyhow::Result<()> {      
         match self.status {
             PeerStatus::Unchoked => Ok(()),
             PeerStatus::NotConnected => {
@@ -130,10 +133,22 @@ impl Peer {
                 }
             }
             PeerStatus::Choked => {
+                log!(LogLevel::Debug, "Peer is choked, have to fix");
                 self.reconnect(torrent, Duration::from_secs(2)).await?;
                 Ok(())
             }
         }
+    }
+
+    pub async fn sync_bitmaps(&mut self, b2: &PieceBitmap) -> anyhow::Result<()> {
+        let diff = self.own_bitfield.diff(&b2);
+        if diff.len() > 40 {
+            for i in diff {
+                self.send_message(&PeerMessage::Have(i as u32)).await?;
+                self.own_bitfield.add(i);
+            }
+        }
+        Ok(())
     }
 
     pub async fn wait_for_msg(
@@ -157,9 +172,9 @@ impl Peer {
             log!(LogLevel::Debug, "Got peer message: {}", msg);
             let msg_str = msg.to_string();
             match msg {
-                PeerMessage::Bitfield(buf) => self.bitfield = Some(buf),
+                PeerMessage::Bitfield(buf) => self.peer_bitfield = Some(buf),
                 PeerMessage::Have(n) => {
-                    if let Some(ref mut bitfield) = self.bitfield {
+                    if let Some(ref mut bitfield) = self.peer_bitfield {
                         let bitfield_i = n / 8;
                         if bitfield_i as usize <= bitfield.len() {
                             let bit_n = n as i32 % 8;
@@ -178,7 +193,7 @@ impl Peer {
                         }
                         let mut bitfield = vec![0u8; (bitfield_i + 1) as usize];
                         bitfield[bitfield_i as usize] |= mask;
-                        self.bitfield = Some(bitfield);
+                        self.peer_bitfield = Some(bitfield);
                     }
                 }
                 PeerMessage::Unchoke => self.status = PeerStatus::Unchoked,
@@ -198,12 +213,13 @@ impl Peer {
                     log!(LogLevel::Error, "peer {} choked", self.peer_addr);
                     anyhow::bail!("Peer choked");
                 }
-                PeerMessage::Interested | PeerMessage::Request(_) => {
-                    // self.send_message(&PeerMessage::Choke).await?;
+                PeerMessage::Interested => {
+                    self.send_message(&PeerMessage::Unchoke).await?;
+                },
+                PeerMessage::Request(buf) => {
+
                 }
-                PeerMessage::KeepAlive => {
-                    // self.send_message(&PeerMessage::KeepAlive).await?;
-                }
+                PeerMessage::KeepAlive => {}
                 _ => {}
             }
             if msg_str == *target_msg.to_string() {
@@ -238,6 +254,12 @@ impl Peer {
                 buf.extend_from_slice(&0u8.to_be_bytes());
                 self.socket.write_all(&buf).await?;
             }
+            PeerMessage::Unchoke => {
+                let mut buf = Vec::new();
+                buf.extend_from_slice(&1u32.to_be_bytes());
+                buf.extend_from_slice(&1u8.to_be_bytes());
+                self.socket.write_all(&buf).await?;
+            }
             PeerMessage::KeepAlive => {
                 self.socket.write_all(&0u32.to_be_bytes()).await?;
             }
@@ -246,6 +268,13 @@ impl Peer {
                 buf.extend_from_slice(&((1 + bitfield.len()) as u32).to_be_bytes());
                 buf.extend_from_slice(&5u8.to_be_bytes());
                 buf.extend_from_slice(bitfield);
+                self.socket.write_all(&buf).await?;
+            },
+            PeerMessage::Have(i) => {
+                let mut buf = Vec::new();
+                buf.extend_from_slice(&1u32.to_be_bytes());
+                buf.extend_from_slice(&4u8.to_be_bytes());
+                buf.extend_from_slice(&(*i).to_be_bytes());
                 self.socket.write_all(&buf).await?;
             }
             _ => {
@@ -296,7 +325,7 @@ impl Peer {
     }
 
     pub fn have_piece(&self, piece_i: usize) -> bool {
-        if let Some(ref bitfield) = self.bitfield {
+        if let Some(ref bitfield) = self.peer_bitfield {
             let bitfield_i = piece_i / 8;
             let bit_i = piece_i as i32 % 8;
             let mut mask = 128;
@@ -316,18 +345,14 @@ impl Peer {
         msg.extend_from_slice(b"BitTorrent protocol");
         msg.extend_from_slice(&[0; 8]);
         msg.extend_from_slice(&torrent.info_hash);
-        msg.extend_from_slice(&self.self_peer_id.as_bytes());
+        msg.extend_from_slice(&self.my_peer_id.as_bytes());
         self.socket.write_all(&msg).await?;
         log!(LogLevel::Debug, "Sended handskake");
         let mut response = [0; 68];
         let _ = timeout(time, self.socket.read_exact(&mut response)).await?;
         log!(LogLevel::Debug, "Received answer handskake");
         let peer_id = &response[response.len() - 20..response.len()];
-        self.send_message(&PeerMessage::Bitfield(vec![
-            0;
-            (torrent.info.piece_hashes.len() as f64 / 8.0).ceil()
-                as usize
-        ]))
+        self.send_message(&PeerMessage::Bitfield(self.own_bitfield.bitmap.clone()))
         .await?;
         Ok(hex::encode(peer_id))
     }

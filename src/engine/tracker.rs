@@ -116,7 +116,7 @@ impl TrackerReq {
                     let peer_id = peer_id.clone();
                     tokio::spawn(async move {
                         if let Ok(peer) =
-                            Peer::new(&peer, data_sender.clone(), peer_id, Duration::from_secs(2) ).await
+                            Peer::new(&peer, data_sender.clone(), peer_id, Duration::from_secs(2)).await
                         {
                             log!(LogLevel::Info, "ok peer {:?}", peer.peer_addr);
                             event_sender
