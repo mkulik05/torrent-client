@@ -6,6 +6,7 @@ mod torrent_import;
 mod torrent_actions;
 mod files_tree;
 
+use once_cell::sync::OnceCell;
 use crate::engine::backup::Backup;
 use crate::engine::TorrentInfo;
 use crate::engine::{
@@ -76,10 +77,14 @@ impl UiHandle {
     }
 }
 
+pub static PUB_UI_HANDLE: OnceCell<UiHandle> = OnceCell::new();
+
 #[derive(Clone, Debug)]
 pub enum UiMsg {
 
     PeerDiscovered(String),
+
+    PeerDisconnect(String),
 
     TorrentFinished,
     PieceDone(u16),

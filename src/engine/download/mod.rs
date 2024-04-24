@@ -9,6 +9,8 @@ use tokio::sync::mpsc::Sender;
 use super::peers::{Peer, PeerMessage, PeerStatus};
 use super::torrent::Torrent;
 use super::DownloadEvents;
+use crate::engine::saver;
+use crate::gui::UiMsg;
 use crate::logger::{log, LogLevel};
 pub use tasks::{ChunksTask, PieceTask};
 
@@ -64,7 +66,6 @@ impl DownloadReq {
                         match e.downcast_ref::<tokio::time::error::Elapsed>() {
                             Some(_) => {
                                 log!(LogLevel::Debug, "Delay eror");
-                                anyhow::bail!("Peer: {} is removed", self.peer.peer_addr);
                             }
                             None => {
                                 if e.to_string() != "Failed to unchoke peer" {
@@ -72,11 +73,18 @@ impl DownloadReq {
                                         .send(DownloadEvents::PeerAdd(self.peer, false))
                                         .await?;
                                     anyhow::bail!("Unknown peer error: {}", e);
-                                } else {
-                                    anyhow::bail!("Peer: {} is removed {e}", self.peer.peer_addr);
                                 }
                             }
                         };
+                        let Some(save_info) = saver::SAVE_INFO.get() else {
+                            anyhow::bail!("Peer: {} is removed", self.peer.peer_addr);
+                        };
+                        let hashmap = save_info.read().await;
+                        let Some(save_info) = hashmap.get(&self.peer.info_hash) else {
+                            anyhow::bail!("Peer: {} is removed", self.peer.peer_addr);
+                        };
+                        let _ = save_info.ui_h.send_with_update(UiMsg::PeerDisconnect(self.peer.peer_addr.clone()));
+                        anyhow::bail!("Peer: {} is removed {e}", self.peer.peer_addr);
                     }
                 }
             };

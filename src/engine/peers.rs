@@ -222,6 +222,7 @@ impl Peer {
                     self.send_message(&PeerMessage::Unchoke).await?;
                 }
                 PeerMessage::Request(buf) => {
+                    log!(LogLevel::Debug, "Got request msg!!!");
                     if buf.len() > 11 {
                         let piece_i = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
                         let begin = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
@@ -267,6 +268,7 @@ impl Peer {
 
                             let _ = self.send_message(&PeerMessage::Piece(req)).await;
                             let _ = save_info.ui_h.send_with_update(UiMsg::DataUploaded(length as u64));
+                            log!(LogLevel::Debug, "Data sent");
                         }
                     }
                 }

@@ -152,6 +152,11 @@ impl MyApp {
                                 torrent.peers.push(peer);
                             }
                         }
+                        UiMsg::PeerDisconnect(peer) => {
+                            if let Some(index) = torrent.peers.iter().position(|x| *x == peer) {
+                                torrent.peers.remove(index);
+                            }
+                        }
                         _ => {}
                     }
                 }
