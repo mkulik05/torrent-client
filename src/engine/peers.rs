@@ -9,6 +9,7 @@ use super::download::DataPiece;
 use super::logger::{LogLevel, log};
 use super::torrent::Torrent;
 use async_recursion::async_recursion;
+use crate::engine::download::tasks::CHUNK_SIZE;
 use crate::engine::torrent::PieceBitmap;
 
 const MAX_INTERESTED_ATTEMPTS: u8 = 3;
@@ -25,6 +26,7 @@ pub struct Peer {
     pub data_sender: Sender<DataPiece>,
     pub status: PeerStatus,
     pub socket: TcpStream,
+    pub info_hash: String,
 }
 
 #[derive(Debug, PartialEq)]
@@ -71,6 +73,7 @@ impl Peer {
         addr: &str,
         data_sender: Sender<DataPiece>,
         peer_id: String,
+        info_hash: String,
         dur: Duration,
     ) -> anyhow::Result<Peer> {
         let socket = match timeout(dur, TcpStream::connect(addr)).await {
@@ -82,6 +85,7 @@ impl Peer {
             peer_addr: addr.to_owned(),
             my_peer_id: peer_id,
             socket,
+            info_hash,
             data_sender,
             peer_bitfield: None,
             own_bitfield: PieceBitmap::new(1),
@@ -217,7 +221,14 @@ impl Peer {
                     self.send_message(&PeerMessage::Unchoke).await?;
                 },
                 PeerMessage::Request(buf) => {
-
+                    if buf.len() > 11 {
+                        let piece_i = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+                        let begin = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
+                        let length = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
+                        if length as u64 <= CHUNK_SIZE {
+                            
+                        }
+                    }
                 }
                 PeerMessage::KeepAlive => {}
                 _ => {}

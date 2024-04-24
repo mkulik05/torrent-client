@@ -93,6 +93,7 @@ impl TrackerReq {
         let req = (*self).clone();
         let tracker_url = tracker_url.clone();
         let peer_id = self.peer_id.clone();
+        let info_hash = self.info_hash.clone();
         tokio::spawn(async move {
             let mut attempts_n = 0;
             let mut tracker_resp = None;
@@ -114,9 +115,10 @@ impl TrackerReq {
                     let data_sender = data_sender.clone();
                     let event_sender = event_sender.clone();
                     let peer_id = peer_id.clone();
+                    let info_hash = hex::encode(info_hash.clone());
                     tokio::spawn(async move {
                         if let Ok(peer) =
-                            Peer::new(&peer, data_sender.clone(), peer_id, Duration::from_secs(2)).await
+                            Peer::new(&peer, data_sender.clone(), peer_id, info_hash, Duration::from_secs(2)).await
                         {
                             log!(LogLevel::Info, "ok peer {:?}", peer.peer_addr);
                             event_sender
