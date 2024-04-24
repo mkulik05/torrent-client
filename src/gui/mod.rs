@@ -13,6 +13,8 @@ use crate::engine::{
     logger::{log, LogLevel},
     torrent::Torrent,
 };
+use crate::engine::saver;
+
 use eframe::egui;
 use egui::{Key, Modifiers};
 use std::collections::VecDeque;
@@ -91,6 +93,9 @@ pub enum UiMsg {
 
     // Pieces done
     Stop(u16),
+
+    // Uploaded bytes
+    DataUploaded(u64)
 }
 
 struct WorkerInfo {
@@ -106,6 +111,7 @@ struct TorrentDownload {
     torrent: Torrent,
     pieces_done: u32,
     save_dir: String,
+    uploaded: u32
 }
 
 pub struct MyApp {
@@ -207,6 +213,7 @@ impl eframe::App for MyApp {
 impl MyApp {
     fn init(&mut self, ctx: &egui::Context) {
         self.inited = true;
+        saver::init_saver_globals();
         Backup::init().expect("Saver does not work");
         match async_std::task::block_on(Backup::global().load_config()) {
             Ok(backups) => {
@@ -217,7 +224,8 @@ impl MyApp {
                         worker_info: None,
                         torrent: backup.torrent.clone(),
                         pieces_done: backup.pieces_done as u32,
-                        save_dir: backup.save_path.clone()
+                        save_dir: backup.save_path.clone(),
+                        uploaded: 0
                     });
                     log!(LogLevel::Info, "done: {}", backup.pieces_done);
                     if let DownloadStatus::Downloading = backup.status {

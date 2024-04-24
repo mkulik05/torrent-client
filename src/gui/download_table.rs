@@ -99,7 +99,7 @@ impl MyApp {
                             ui.label(size);
                         });
                         row.col(|ui| {
-                            ui.label("0");
+                            ui.label(get_readable_size(self.torrents[row_i].uploaded as usize, 2));
                         });
 
                         if row.response().clicked() {

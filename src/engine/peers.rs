@@ -1,16 +1,17 @@
+use async_recursion::async_recursion;
 use std::time::Duration;
-
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::Sender;
 use tokio::time::timeout;
 
 use super::download::DataPiece;
-use super::logger::{LogLevel, log};
+use super::logger::{log, LogLevel};
 use super::torrent::Torrent;
-use async_recursion::async_recursion;
 use crate::engine::download::tasks::CHUNK_SIZE;
+use crate::engine::saver;
 use crate::engine::torrent::PieceBitmap;
+use crate::gui::UiMsg;
 
 const MAX_INTERESTED_ATTEMPTS: u8 = 3;
 
@@ -103,7 +104,7 @@ impl Peer {
     }
 
     #[async_recursion]
-    pub async fn connect(&mut self, torrent: &Torrent) -> anyhow::Result<()> {      
+    pub async fn connect(&mut self, torrent: &Torrent) -> anyhow::Result<()> {
         match self.status {
             PeerStatus::Unchoked => Ok(()),
             PeerStatus::NotConnected => {
@@ -219,14 +220,53 @@ impl Peer {
                 }
                 PeerMessage::Interested => {
                     self.send_message(&PeerMessage::Unchoke).await?;
-                },
+                }
                 PeerMessage::Request(buf) => {
                     if buf.len() > 11 {
                         let piece_i = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
                         let begin = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
                         let length = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
                         if length as u64 <= CHUNK_SIZE {
-                            
+                            let Some(save_info) = saver::SAVE_INFO.get() else {
+                                continue;
+                            };
+                            let hashmap = save_info.read().await;
+                            let Some(save_info) = hashmap.get(&self.info_hash)
+                            else {
+                                continue;
+                            };
+                            let mut buf = Vec::new();
+                            if let Some(size_progression) = &save_info.size_progression {
+                                if let Ok(_) = saver::read_piece_from_files(
+                                    &save_info.save_path,
+                                    &save_info.torrent.clone(),
+                                    piece_i as u64,
+                                    begin as u64,
+                                    length as u64,
+                                    &mut buf,
+                                    size_progression,
+                                ) {
+
+                                }
+                            } else {
+                                use std::fs::File;
+                                use std::io::{Seek, Read};
+                                let Ok(mut file) = File::options()
+                                    .read(true)
+                                    .write(true)
+                                    .create(false)
+                                    .open(&save_info.save_path) else {continue};
+                                buf = vec![0u8; length as usize];
+                                let Ok(_) = file.seek(std::io::SeekFrom::Start(begin as u64)) else {continue};
+                                let Ok(_) = file.read_exact(&mut buf) else {continue};
+                            }
+                            let mut req = Vec::new();
+                            req.extend_from_slice(&piece_i.to_be_bytes());
+                            req.extend_from_slice(&begin.to_be_bytes());
+                            req.extend_from_slice(&buf);
+
+                            let _ = self.send_message(&PeerMessage::Piece(req)).await;
+                            let _ = save_info.ui_h.send_with_update(UiMsg::DataUploaded(length as u64));
                         }
                     }
                 }
@@ -280,12 +320,19 @@ impl Peer {
                 buf.extend_from_slice(&5u8.to_be_bytes());
                 buf.extend_from_slice(bitfield);
                 self.socket.write_all(&buf).await?;
-            },
+            }
             PeerMessage::Have(i) => {
                 let mut buf = Vec::new();
                 buf.extend_from_slice(&1u32.to_be_bytes());
                 buf.extend_from_slice(&4u8.to_be_bytes());
                 buf.extend_from_slice(&(*i).to_be_bytes());
+                self.socket.write_all(&buf).await?;
+            },
+            PeerMessage::Piece(req) => {
+                let mut buf = Vec::new();
+                buf.extend_from_slice(&((1 + req.len()) as u32).to_be_bytes());
+                buf.extend_from_slice(&7u8.to_be_bytes());
+                buf.extend_from_slice(req);
                 self.socket.write_all(&buf).await?;
             }
             _ => {
@@ -364,7 +411,7 @@ impl Peer {
         log!(LogLevel::Debug, "Received answer handskake");
         let peer_id = &response[response.len() - 20..response.len()];
         self.send_message(&PeerMessage::Bitfield(self.own_bitfield.bitmap.clone()))
-        .await?;
+            .await?;
         Ok(hex::encode(peer_id))
     }
 }

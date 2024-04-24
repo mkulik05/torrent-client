@@ -70,6 +70,7 @@ impl MyApp {
                 worker_info: Some(info),
                 pieces_done: 0,
                 save_dir: folder,
+                uploaded: 0,
             });
         } else {
             self.torrents[torrent_i.unwrap()].worker_info = Some(info);
@@ -136,6 +137,9 @@ impl MyApp {
                             {
                                 torrent.status = DownloadStatus::Finished;
                             }
+                        }
+                        UiMsg::DataUploaded(n) => {
+                            torrent.uploaded += n as u32;
                         }
                         UiMsg::TorrentFinished => {
                             torrent.peers.clear();

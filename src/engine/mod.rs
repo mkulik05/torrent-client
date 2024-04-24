@@ -24,7 +24,7 @@ mod bencode;
 pub mod download;
 pub mod logger;
 mod peers;
-mod saver;
+pub mod saver;
 pub mod torrent;
 mod tracker;
 
@@ -161,7 +161,7 @@ pub async fn download_torrent(
             None
         },
         saver_cancel.clone(),
-    );
+    ).await;
 
     if pieces_tasks.is_empty() && chunks_tasks.is_empty() {
         log!(LogLevel::Info, "Done");

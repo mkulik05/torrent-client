@@ -29,7 +29,20 @@ struct PieceChunksBitmap {
     last_chunk_mask: u8,
 }
 
-static INSTANCE: OnceCell<RwLock<u32>> = OnceCell::new();
+#[derive(Debug)]
+pub struct SaveInfo {
+    pub save_path: String,
+    pub torrent: Arc<Torrent>,
+    pub size_progression: Option<Vec<u64>>,
+    pub ui_h: UiHandle
+}
+
+
+pub static SAVE_INFO: OnceCell<RwLock<HashMap<String, SaveInfo>>> = OnceCell::new();
+
+pub fn init_saver_globals () {
+    SAVE_INFO.set(RwLock::new(HashMap::new())).expect("Failed to init once_cell");
+}
 
 impl PieceChunksBitmap {
     fn new(torrent: &Torrent, piece_i: usize) -> Self {
@@ -115,7 +128,7 @@ fn bin_search(value: u64, arr: &[u64], l: usize, r: usize) -> usize {
     }
 }
 
-pub fn spawn_saver(
+pub async fn spawn_saver(
     src_path: String,
     torrent: Arc<Torrent>,
     mut get_data: Receiver<DataPiece>,
@@ -138,6 +151,14 @@ pub fn spawn_saver(
     } else {
         None
     };
+
+    SAVE_INFO.get().unwrap().write().await.insert(hex::encode(torrent.info_hash.clone()), SaveInfo {
+        save_path: src_path.clone(),
+        torrent: torrent.clone(),
+        size_progression: files_lengthes.clone(),
+        ui_h: ui_handle.clone()
+    });
+
     // Saver task - save downloaded chunks to disk, verify piece hash,
     // notify about finishing donwload
     tokio::spawn(async move {
@@ -190,7 +211,9 @@ pub fn spawn_saver(
                     break;
                 },
                 data = get_data.recv() => {
-                    let Some(data) = data else {break};
+                    let Some(data) = data else {
+                        break
+                    };
                     if pieces_chunks.contains_key(&data.piece_i)
                 && pieces_chunks
                     .get(&data.piece_i)
@@ -319,7 +342,7 @@ pub fn spawn_saver(
                         }
             }
         }
-
+        SAVE_INFO.get().unwrap().write().await.remove(&hex::encode(torrent.info_hash.clone()));
         Ok(())
     })
 }
@@ -389,18 +412,18 @@ fn save_data_to_files(
     Ok(())
 }
 
-fn read_piece_from_files(
+pub fn read_piece_from_files(
     src_path: &String,
     torrent: &Arc<Torrent>,
     piece_i: u64,
     addr: u64,
-    piece_length: u64,
+    length_to_read: u64,
     mut piece_buf: &mut Vec<u8>,
     size_progression: &Vec<u64>,
 ) -> anyhow::Result<()> {
     let file_i_l = bin_search(addr, &size_progression, 0, size_progression.len());
     let file_i_r = bin_search(
-        addr + torrent.get_piece_length(piece_i as usize),
+        addr + length_to_read,
         &size_progression,
         0,
         size_progression.len(),
@@ -417,7 +440,7 @@ fn read_piece_from_files(
         file.seek(std::io::SeekFrom::Start(
             addr - size_progression[file_i_l - 1],
         ))?;
-        *piece_buf = vec![0u8; piece_length as usize];
+        *piece_buf = vec![0u8; length_to_read as usize];
         file.read_exact(&mut piece_buf)?;
     } else {
         *piece_buf = Vec::new();

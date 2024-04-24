@@ -97,7 +97,10 @@ impl MyApp {
 
                                 label!(ui, "Downloaded:", data, max_w);
 
-                                label!(ui, "Uploaded:", 0, max_w);
+                                if let Some(i) = self.selected_row {
+                                    data = get_readable_size(self.torrents[i].uploaded as usize, 2)
+                                }
+                                label!(ui, "Uploaded:", data, max_w);
 
                                 let mut data = 0;
 
