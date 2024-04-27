@@ -9,34 +9,32 @@ impl MyApp {
             .show(ctx, |ui| {
                 ui.set_enabled(!self.import_opened);
                 egui::menu::bar(ui, |ui| {
-                    ui.menu_button("File", |ui| {
-                        if ui.button("Open").clicked() {
-                            ui.close_menu();
-                            let file = rfd::FileDialog::new()
-                                .add_filter("Torrent file", &["torrent"])
-                                .pick_file();
-                            if let Some(path) = file {
-                                let torrent = parse_torrent(path.to_str().unwrap());
-                                if let Ok(torrent) = torrent {
-                                    if self
-                                        .torrents
-                                        .iter()
-                                        .position(|x| x.torrent.info_hash == torrent.info_hash)
-                                        .is_none()
-                                    {
-                                        self.import_torrent = Some(torrent);
-                                        self.import_opened = true;
-                                    } else {
-                                        self.user_msg = Some((
-                                            "Alert".to_string(),
-                                            "This torrent is already imported".to_string(),
-                                        ));
-                                        ctx.request_repaint();
-                                    }
+                    if ui.button("Open file").clicked() {
+                        ui.close_menu();
+                        let file = rfd::FileDialog::new()
+                            .add_filter("Torrent file", &["torrent"])
+                            .pick_file();
+                        if let Some(path) = file {
+                            let torrent = parse_torrent(path.to_str().unwrap());
+                            if let Ok(torrent) = torrent {
+                                if self
+                                    .torrents
+                                    .iter()
+                                    .position(|x| x.torrent.info_hash == torrent.info_hash)
+                                    .is_none()
+                                {
+                                    self.import_torrent = Some(torrent);
+                                    self.import_opened = true;
+                                } else {
+                                    self.user_msg = Some((
+                                        "Alert".to_string(),
+                                        "This torrent is already imported".to_string(),
+                                    ));
+                                    ctx.request_repaint();
                                 }
                             }
                         }
-                    });
+                    }
                     ui.menu_button("Edit", |ui| {
                         self.torrent_actions(ui, ctx);
                     });
