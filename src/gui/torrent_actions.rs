@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use crate::engine::backup::Backup;
 use crate::engine::{
     download_torrent,
@@ -7,6 +9,8 @@ use crate::gui::MyApp;
 use crate::gui::{DownloadStatus, TorrentDownload, TorrentInfo, UiHandle, UiMsg, WorkerInfo};
 use eframe::egui;
 use tokio::sync::broadcast;
+
+use super::{TimeStamp, PIECES_TO_TIME_MEASURE};
 
 impl MyApp {
     pub fn start_download(&mut self, torrent_info: TorrentInfo, ctx: &egui::Context) {
@@ -43,7 +47,9 @@ impl MyApp {
                     ui_sender: sender,
                     ctx,
                 };
-                if let Err(e) = download_torrent(torrent_info, &folder, ui_handle.clone(), peer_id).await {
+                if let Err(e) =
+                    download_torrent(torrent_info, &folder, ui_handle.clone(), peer_id).await
+                {
                     log!(LogLevel::Fatal, "Failed to download torrent: {e}");
                     ui_handle
                         .send_with_update(UiMsg::TorrentErr(e.to_string()))
@@ -62,6 +68,12 @@ impl MyApp {
             .torrents
             .iter()
             .position(|x| x.torrent.info_hash == torrent.info_hash);
+
+        use std::time::Instant;
+        let timestamp = Some(TimeStamp {
+            time: Instant::now(),
+            pieces_n: 0,
+        });
         if torrent_i.is_none() {
             self.torrents.push(TorrentDownload {
                 peers: Vec::new(),
@@ -69,11 +81,15 @@ impl MyApp {
                 status: DownloadStatus::Downloading,
                 worker_info: Some(info),
                 pieces_done: 0,
+                download_speed: 0,
                 save_dir: folder,
+                last_timestamp: timestamp,
                 uploaded: 0,
             });
         } else {
-            self.torrents[torrent_i.unwrap()].worker_info = Some(info);
+            let i = torrent_i.unwrap();
+            self.torrents[i].worker_info = Some(info);
+            self.torrents[i].last_timestamp = timestamp;
         }
     }
     pub fn pause_torrent(&mut self, i: usize) {
@@ -123,41 +139,105 @@ impl MyApp {
             }
         }
     }
-    pub fn torrent_updates(&mut self) {
-        for torrent in &mut self.torrents {
-            if torrent.worker_info.is_none() {
+    pub fn torrent_updates(&mut self, ctx: &egui::Context) {
+        for t_i in 0..self.torrents.len() {
+            if self.torrents[t_i].worker_info.is_none() {
                 continue;
             }
-            while let Ok(msg) = torrent.worker_info.as_mut().unwrap().receiver.try_recv() {
-                if let DownloadStatus::Downloading = torrent.status {
+            while let Ok(msg) = self.torrents[t_i]
+                .worker_info
+                .as_mut()
+                .unwrap()
+                .receiver
+                .try_recv()
+            {
+                if let DownloadStatus::Downloading = self.torrents[t_i].status {
+                    let mut done_piece = false;
                     match msg {
                         UiMsg::PieceDone(_) => {
-                            torrent.pieces_done += 1;
-                            if torrent.pieces_done == torrent.torrent.info.piece_hashes.len() as u32
+                            done_piece = true;
+                            self.torrents[t_i].pieces_done += 1;
+                            if self.torrents[t_i].last_timestamp.is_some() {
+                                let info = self.torrents[t_i].last_timestamp.as_ref().unwrap();
+                                let pieces_done_from_timestamp =
+                                    self.torrents[t_i].pieces_done - info.pieces_n;
+                                if pieces_done_from_timestamp >= PIECES_TO_TIME_MEASURE as u32 {
+                                    let time_per_piece = info.time.elapsed().as_millis()
+                                        / PIECES_TO_TIME_MEASURE as u128;
+
+                                    log!(
+                                        LogLevel::Debug,
+                                        "Peice download time is {}ms for torrent {}",
+                                        time_per_piece,
+                                        self.torrents[t_i].torrent.info.name
+                                    );
+                                    if time_per_piece as f64
+                                        / self.torrents[t_i].download_speed as f64
+                                        >= 3.0
+                                    {
+                                        self.pause_torrent(t_i);
+                                        self.resume_torrent(t_i, ctx)
+                                    }
+
+                                    self.torrents[t_i].last_timestamp = Some(TimeStamp {
+                                        time: Instant::now(),
+                                        pieces_n: self.torrents[t_i].pieces_done,
+                                    });
+                                }
+                            } else {
+                                self.torrents[t_i].last_timestamp = Some(TimeStamp {
+                                    time: Instant::now(),
+                                    pieces_n: self.torrents[t_i].pieces_done,
+                                });
+                            }
+
+                            if self.torrents[t_i].pieces_done
+                                == self.torrents[t_i].torrent.info.piece_hashes.len() as u32
                             {
-                                torrent.status = DownloadStatus::Finished;
+                                self.torrents[t_i].status = DownloadStatus::Finished;
                             }
                         }
                         UiMsg::DataUploaded(n) => {
-                            torrent.uploaded += n as u32;
+                            self.torrents[t_i].uploaded += n as u32;
                         }
                         UiMsg::TorrentFinished => {
-                            torrent.peers.clear();
-                            torrent.status = DownloadStatus::Finished;
-                            torrent.pieces_done = torrent.torrent.info.piece_hashes.len() as u32;
+                            self.torrents[t_i].peers.clear();
+                            self.torrents[t_i].status = DownloadStatus::Finished;
+                            self.torrents[t_i].pieces_done =
+                                self.torrents[t_i].torrent.info.piece_hashes.len() as u32;
                         }
-                        UiMsg::TorrentErr(msg) => torrent.status = DownloadStatus::Error(msg),
+                        UiMsg::TorrentErr(msg) => {
+                            self.torrents[t_i].status = DownloadStatus::Error(msg)
+                        }
                         UiMsg::PeerDiscovered(peer) => {
-                            if torrent.peers.iter().position(|x| *x == peer).is_none() {
-                                torrent.peers.push(peer);
+                            if self.torrents[t_i]
+                                .peers
+                                .iter()
+                                .position(|x| *x == peer)
+                                .is_none()
+                            {
+                                self.torrents[t_i].peers.push(peer);
                             }
                         }
                         UiMsg::PeerDisconnect(peer) => {
-                            if let Some(index) = torrent.peers.iter().position(|x| *x == peer) {
-                                torrent.peers.remove(index);
+                            if let Some(index) =
+                                self.torrents[t_i].peers.iter().position(|x| *x == peer)
+                            {
+                                self.torrents[t_i].peers.remove(index);
                             }
                         }
                         _ => {}
+                    }
+                    if !done_piece {
+                        if self.torrents[t_i].last_timestamp.is_some() {
+                            let info = self.torrents[t_i].last_timestamp.as_ref().unwrap();
+                            let piece_time = info.time.elapsed().as_millis() / PIECES_TO_TIME_MEASURE as u128;
+                            if info.time.elapsed().as_millis() > 30_000 && piece_time >= self.torrents[t_i].download_speed as u128 {
+                                log!(LogLevel::Debug, "Torrent is not active for too long, restarting it");
+                                self.pause_torrent(t_i);
+                                self.resume_torrent(t_i, ctx)
+                            }
+                        }
                     }
                 }
             }

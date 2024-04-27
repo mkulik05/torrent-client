@@ -20,6 +20,7 @@ use eframe::egui;
 use egui::{Key, Modifiers};
 use std::collections::VecDeque;
 use std::time::Duration;
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -27,6 +28,8 @@ use tokio::{
     task::JoinHandle,
 };
 
+
+const PIECES_TO_TIME_MEASURE: u8 = 5;
 
 pub fn start_gui() -> anyhow::Result<()> {
     let icon = include_bytes!("../../folder-download.png");
@@ -109,12 +112,18 @@ struct WorkerInfo {
     receiver: Receiver<UiMsg>,
 }
 
+pub struct TimeStamp {
+    pub time: Instant,
+    pub pieces_n: u32
+}
 struct TorrentDownload {
     status: DownloadStatus,
     worker_info: Option<WorkerInfo>,
     peers: Vec<String>,
     torrent: Torrent,
     pieces_done: u32,
+    last_timestamp: Option<TimeStamp>,
+    download_speed: u16,
     save_dir: String,
     uploaded: u32
 }
@@ -164,7 +173,7 @@ impl eframe::App for MyApp {
             self.import_window(ctx);            
         }
 
-        self.torrent_updates();
+        self.torrent_updates(ctx);
 
         self.show_message(ctx);
         
@@ -230,6 +239,8 @@ impl MyApp {
                         torrent: backup.torrent.clone(),
                         pieces_done: backup.pieces_done as u32,
                         save_dir: backup.save_path.clone(),
+                        last_timestamp: None,
+                        download_speed: 0,
                         uploaded: 0
                     });
                     log!(LogLevel::Info, "done: {}", backup.pieces_done);
