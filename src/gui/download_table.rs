@@ -10,7 +10,7 @@ impl MyApp {
             .resizable(true)
             .auto_shrink(false)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::auto().clip(true).at_least(width / 3.0))
+            .column(Column::auto().clip(true).at_least(width / 6.0))
             .column(Column::auto())
             .column(Column::auto())
             .column(Column::initial(100.0).at_least(40.0).clip(true))

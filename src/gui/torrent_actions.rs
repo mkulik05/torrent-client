@@ -143,20 +143,25 @@ impl MyApp {
             if self.torrents[t_i].worker_info.is_none() {
                 continue;
             }
-            while let Ok(msg) = self.torrents[t_i]
-                .worker_info
-                .as_mut()
-                .unwrap()
-                .receiver
-                .try_recv()
-            {
-                if let DownloadStatus::Downloading = self.torrents[t_i].status {
-                    let mut done_piece = false;
+
+            if let DownloadStatus::Downloading = self.torrents[t_i].status {
+                let mut done_piece = false;
+                while let Ok(msg) = self.torrents[t_i]
+                    .worker_info
+                    .as_mut()
+                    .unwrap()
+                    .receiver
+                    .try_recv()
+                {
                     match msg {
                         UiMsg::PieceDone(_) => {
                             done_piece = true;
                             self.torrents[t_i].pieces_done += 1;
-                            log!(LogLevel::Info, "Donwloaded: {}", self.torrents[t_i].pieces_done);
+                            log!(
+                                LogLevel::Info,
+                                "Donwloaded: {}",
+                                self.torrents[t_i].pieces_done
+                            );
                             if self.torrents[t_i].last_timestamp.is_some() {
                                 let info = self.torrents[t_i].last_timestamp.as_ref().unwrap();
                                 let pieces_done_from_timestamp =
@@ -165,7 +170,8 @@ impl MyApp {
                                     let time_per_piece = info.time.elapsed().as_millis()
                                         / PIECES_TO_TIME_MEASURE as u128;
                                     if self.torrents[t_i].download_speed.is_none() {
-                                        self.torrents[t_i].download_speed = Some(time_per_piece as u16);
+                                        self.torrents[t_i].download_speed =
+                                            Some(time_per_piece as u16);
                                         continue;
                                     }
                                     log!(
@@ -174,7 +180,11 @@ impl MyApp {
                                         time_per_piece,
                                         self.torrents[t_i].torrent.info.name
                                     );
-                                    log!(LogLevel::Info, "curr speed: {time_per_piece}, result: {}", self.torrents[t_i].download_speed.unwrap());
+                                    log!(
+                                        LogLevel::Info,
+                                        "curr speed: {time_per_piece}, result: {}",
+                                        self.torrents[t_i].download_speed.unwrap()
+                                    );
 
                                     if time_per_piece as f64
                                         / self.torrents[t_i].download_speed.unwrap() as f64
@@ -188,6 +198,7 @@ impl MyApp {
                                         time: Instant::now(),
                                         pieces_n: self.torrents[t_i].pieces_done,
                                     });
+                                    self.torrents[t_i].download_speed = Some(time_per_piece as u16);
                                 }
                             } else {
                                 self.torrents[t_i].last_timestamp = Some(TimeStamp {
@@ -233,15 +244,18 @@ impl MyApp {
                         }
                         _ => {}
                     }
-                    if !done_piece {
-                        if self.torrents[t_i].last_timestamp.is_some() {
-                            let info = self.torrents[t_i].last_timestamp.as_ref().unwrap();
-                            let piece_time = info.time.elapsed().as_millis() / PIECES_TO_TIME_MEASURE as u128;
-                    
-                            if info.time.elapsed().as_millis() > 30_000 && piece_time >= self.torrents[t_i].download_speed.unwrap_or(0) as u128 {
-                                self.pause_torrent(t_i);
-                                self.resume_torrent(t_i, ctx)
-                            }
+                }
+                if !done_piece {
+                    if self.torrents[t_i].last_timestamp.is_some() {
+                        let info = self.torrents[t_i].last_timestamp.as_ref().unwrap();
+                        let piece_time =
+                            info.time.elapsed().as_millis() / PIECES_TO_TIME_MEASURE as u128;
+
+                        if info.time.elapsed().as_millis() > 30_000
+                            && piece_time >= self.torrents[t_i].download_speed.unwrap_or(0) as u128
+                        {
+                            self.pause_torrent(t_i);
+                            self.resume_torrent(t_i, ctx)
                         }
                     }
                 }

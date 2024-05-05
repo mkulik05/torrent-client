@@ -38,7 +38,6 @@ impl MyApp {
                     ui.menu_button("Edit", |ui| {
                         self.torrent_actions(ui, ctx);
                     });
-                    ui.button("Settigns");
                 });
 
                 ui.separator();
