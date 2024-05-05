@@ -14,6 +14,7 @@ impl MyApp {
             .column(Column::auto())
             .column(Column::auto())
             .column(Column::initial(100.0).at_least(40.0).clip(true))
+            .column(Column::auto())
             .column(Column::remainder().at_least(40.0))
             .min_scrolled_height(0.0);
 
@@ -31,6 +32,9 @@ impl MyApp {
                 });
                 header.col(|ui| {
                     ui.strong("Downloaded");
+                });
+                header.col(|ui| {
+                    ui.strong("Speed");
                 });
                 header.col(|ui| {
                     ui.strong("Uploaded");
@@ -59,11 +63,7 @@ impl MyApp {
                                 match self.torrents[row_i].status {
                                     DownloadStatus::Downloading => {
                                         let progress = self.torrents[row_i].pieces_done as f32
-                                            / self.torrents[row_i]
-                                                .torrent
-                                                .info
-                                                .piece_hashes
-                                                .len()
+                                            / self.torrents[row_i].torrent.info.piece_hashes.len()
                                                 as f32;
                                         egui::ProgressBar::new(progress)
                                             .text(format!("{:.2}%", progress * 100.0))
@@ -73,11 +73,7 @@ impl MyApp {
                                     }
                                     _ => {
                                         let progress = self.torrents[row_i].pieces_done as f32
-                                            / self.torrents[row_i]
-                                                .torrent
-                                                .info
-                                                .piece_hashes
-                                                .len()
+                                            / self.torrents[row_i].torrent.info.piece_hashes.len()
                                                 as f32;
                                         egui::ProgressBar::new(progress)
                                             .text(format!("{:.2}%", progress * 100.0))
@@ -89,14 +85,30 @@ impl MyApp {
                         });
                         row.col(|ui| {
                             let mut size = self.torrents[row_i].pieces_done as usize
-                                    * self.torrents[row_i].torrent.info.piece_length as usize;
-                                    if size > self.torrents[row_i].torrent.info.length as usize {
-                                        size = self.torrents[row_i].torrent.info.length as usize;
-                                    } 
-                            let size = get_readable_size(size,
-                                2,
-                            );
+                                * self.torrents[row_i].torrent.info.piece_length as usize;
+                            if size > self.torrents[row_i].torrent.info.length as usize {
+                                size = self.torrents[row_i].torrent.info.length as usize;
+                            }
+                            let size = get_readable_size(size, 2);
                             ui.label(size);
+                        });
+                        row.col(|ui| {
+                            if let DownloadStatus::Downloading  = self.torrents[row_i].status {
+                                if let Some(speed) = self.torrents[row_i].download_speed {
+                                    ui.label(
+                                        get_readable_size(
+                                            self.torrents[row_i].torrent.info.piece_length as usize
+                                                / (speed
+                                                    as usize) * 1_000,
+                                            2,
+                                        ) + "/s",
+                                    );
+                                } else {
+                                    ui.label("0"); 
+                                }
+                            } else {
+                               ui.label("0"); 
+                            }
                         });
                         row.col(|ui| {
                             ui.label(get_readable_size(self.torrents[row_i].uploaded as usize, 2));
@@ -116,7 +128,7 @@ impl MyApp {
                         if let DownloadStatus::Error(msg) = &self.torrents[row_i].status {
                             row.response().on_hover_text(msg);
                         }
-                        
+
                         row.response().context_menu(|ui| {
                             // self.context_selected_row = Some(row_index);
 

@@ -17,7 +17,7 @@ use crate::engine::{
 use crate::engine::saver;
 
 use eframe::egui;
-use egui::{Key, Modifiers};
+use egui::Modifiers;
 use std::collections::VecDeque;
 use std::time::Duration;
 use std::time::Instant;
@@ -79,8 +79,6 @@ impl UiHandle {
         Ok(())
     }
 }
-
-pub static PUB_UI_HANDLE: OnceCell<UiHandle> = OnceCell::new();
 
 #[derive(Clone, Debug)]
 pub enum UiMsg {
