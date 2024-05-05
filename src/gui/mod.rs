@@ -123,7 +123,7 @@ struct TorrentDownload {
     torrent: Torrent,
     pieces_done: u32,
     last_timestamp: Option<TimeStamp>,
-    download_speed: u16,
+    download_speed: Option<u16>,
     save_dir: String,
     uploaded: u32
 }
@@ -240,7 +240,7 @@ impl MyApp {
                         pieces_done: backup.pieces_done as u32,
                         save_dir: backup.save_path.clone(),
                         last_timestamp: None,
-                        download_speed: 0,
+                        download_speed: None,
                         uploaded: 0
                     });
                     log!(LogLevel::Info, "done: {}", backup.pieces_done);
