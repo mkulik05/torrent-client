@@ -6,7 +6,7 @@ mod torrent_import;
 mod torrent_actions;
 mod files_tree;
 
-use once_cell::sync::OnceCell;
+use egui::Visuals;
 use crate::engine::backup::Backup;
 use crate::engine::TorrentInfo;
 use crate::engine::{
@@ -160,6 +160,7 @@ impl Default for MyApp {
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // ctx.set_visuals(Visuals::light());
         self.handle_keys(ctx);
         ctx.set_zoom_factor(self.zoom);
         
@@ -294,5 +295,35 @@ fn get_readable_size(bytes: usize, prec: usize) -> String {
         1024..=1_048_575 => format!("{:.1$}KB", bytes as f64 / 1024.0, prec),
         1_048_576..=1_073_741_823 => format!("{:.1$}MB", bytes as f64 / 1_048_576.0, prec),
         _ => format!("{:.1$}GB", bytes as f64 / 1_073_741_824.0, prec),
+    }
+}
+
+fn format_duration(seconds: u64) -> String {
+    if seconds < 60 {
+        return format!("{}s", seconds);
+    } else if seconds < 3600 {
+        let minutes = seconds / 60;
+        let seconds_remainder = seconds % 60;
+        if seconds_remainder == 0 {
+            return format!("{}m", minutes);
+        } else {
+            return format!("{}m {}s", minutes, seconds_remainder);
+        }
+    } else if seconds < 86400 {
+        let hours = seconds / 3600;
+        let minutes_remainder = (seconds % 3600) / 60;
+        if minutes_remainder == 0 {
+            return format!("{}h", hours);
+        } else {
+            return format!("{}h {}m", hours, minutes_remainder);
+        }
+    } else {
+        let days = seconds / 86400;
+        let hours_remainder = (seconds % 86400) / 3600;
+        if hours_remainder == 0 {
+            return format!("{}d", days);
+        } else {
+            return format!("{}d {}h", days, hours_remainder);
+        }
     }
 }

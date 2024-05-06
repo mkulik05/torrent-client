@@ -2,6 +2,8 @@ use crate::gui::{get_readable_size, DownloadStatus, MyApp};
 use eframe::egui::Ui;
 use egui::Color32;
 use egui_extras::{Column, TableBuilder};
+
+use super::format_duration;
 impl MyApp {
     pub fn draw_table(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         let width = ui.available_width();
@@ -14,6 +16,7 @@ impl MyApp {
             .column(Column::auto())
             .column(Column::auto())
             .column(Column::initial(100.0).at_least(40.0).clip(true))
+            .column(Column::auto())
             .column(Column::auto())
             .column(Column::remainder().at_least(40.0))
             .min_scrolled_height(0.0);
@@ -35,6 +38,9 @@ impl MyApp {
                 });
                 header.col(|ui| {
                     ui.strong("Speed");
+                });
+                header.col(|ui| {
+                    ui.strong("Time left");
                 });
                 header.col(|ui| {
                     ui.strong("Uploaded");
@@ -108,6 +114,19 @@ impl MyApp {
                                 }
                             } else {
                                ui.label("0"); 
+                            }
+                        });
+                        row.col(|ui| {
+                            if let DownloadStatus::Downloading  = self.torrents[row_i].status {
+                                if let Some(speed) = self.torrents[row_i].download_speed {
+                                    let pieces_left = self.torrents[row_i].torrent.info.piece_hashes.len() - self.torrents[row_i].pieces_done as usize;
+                                    let left_secs = pieces_left as f64 / speed as f64 * 1_000.0;
+                                    ui.label(format_duration(left_secs.ceil() as u64));
+                                } else {
+                                    ui.label("∞"); 
+                                }
+                            } else {
+                                ui.label("∞");
                             }
                         });
                         row.col(|ui| {
