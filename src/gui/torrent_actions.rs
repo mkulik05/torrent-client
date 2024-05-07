@@ -93,13 +93,18 @@ impl MyApp {
     }
     pub fn pause_torrent(&mut self, i: usize) {
         self.torrents[i].peers.clear();
-        if let Some(ref info) = self.torrents[i].worker_info {
+        let worker_info = self.torrents[i].worker_info.take();
+        if let Some(info) = worker_info {
             log!(LogLevel::Info, "Sended msg!!!");
             info.sender
                 .send(UiMsg::Pause(self.torrents[i].pieces_done as u16))
                 .unwrap();
             log!(LogLevel::Info, "Finished: sended msg!!!");
             self.torrents[i].status = DownloadStatus::Paused;
+
+            async_std::task::block_on(async move {
+                let _ = info.handle.await;
+            });
         }
     }
 
@@ -176,7 +181,7 @@ impl MyApp {
                                     }
                                     log!(
                                         LogLevel::Debug,
-                                        "Peice download time is {}ms for torrent {}",
+                                        "Piece download time is {}ms for torrent {}",
                                         time_per_piece,
                                         self.torrents[t_i].torrent.info.name
                                     );
