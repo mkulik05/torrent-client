@@ -38,6 +38,19 @@ impl MyApp {
                     ui.menu_button("Edit", |ui| {
                         self.torrent_actions(ui, ctx);
                     });
+                    ui.menu_button("Appearance", |ui| {
+                        if ui.button("Zoom In").clicked() {
+                            self.zoom += 0.1;
+                        }
+                        if ui.button("Zoom Out").clicked() {
+                            if self.zoom > 0.1 {
+                                self.zoom -= 0.1;
+                            } 
+                        }
+                        if ui.button(format!("{} theme", if self.is_dark_theme {"Light"} else {"Dark"})).clicked() {
+                            self.is_dark_theme = !self.is_dark_theme;
+                        }
+                    });
                 });
 
                 ui.separator();

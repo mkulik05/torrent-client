@@ -1,20 +1,20 @@
-mod download_table;
-mod top_panel;
 mod bottom_panel;
 mod central_panel;
-mod torrent_import;
-mod torrent_actions;
+mod download_table;
 mod files_tree;
+mod top_panel;
+mod torrent_actions;
+mod torrent_import;
 
-use egui::Visuals;
 use crate::engine::backup::Backup;
+use crate::engine::saver;
 use crate::engine::TorrentInfo;
 use crate::engine::{
     download::{ChunksTask, PieceTask},
     logger::{log, LogLevel},
     torrent::Torrent,
 };
-use crate::engine::saver;
+use egui::Visuals;
 
 use eframe::egui;
 use egui::Modifiers;
@@ -28,20 +28,23 @@ use tokio::{
     task::JoinHandle,
 };
 
-
 const PIECES_TO_TIME_MEASURE: u8 = 5;
 
 pub fn start_gui() -> anyhow::Result<()> {
     let icon = include_bytes!("../../folder-download.png");
-    let image = image::load_from_memory(icon).expect("Failuse to load image").to_rgba8();
+    let image = image::load_from_memory(icon)
+        .expect("Failuse to load image")
+        .to_rgba8();
     let (icon_width, icon_height) = image.dimensions();
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 750.0]).with_min_inner_size([400.0, 200.0]).with_icon(
-            egui::IconData {
-                rgba: image.into_raw(), 
-                width: icon_width, 
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([900.0, 750.0])
+            .with_min_inner_size([400.0, 200.0])
+            .with_icon(egui::IconData {
+                rgba: image.into_raw(),
+                width: icon_width,
                 height: icon_height,
-        }),
+            }),
         ..Default::default()
     };
     eframe::run_native("MkTorrent", options, Box::new(|_| Box::<MyApp>::default())).unwrap();
@@ -53,7 +56,7 @@ pub enum DownloadStatus {
     Downloading,
     Paused,
     Finished,
-    Error(String)
+    Error(String),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -82,7 +85,6 @@ impl UiHandle {
 
 #[derive(Clone, Debug)]
 pub enum UiMsg {
-
     PeerDiscovered(String),
 
     PeerDisconnect(String),
@@ -101,7 +103,7 @@ pub enum UiMsg {
     Stop(u16),
 
     // Uploaded bytes
-    DataUploaded(u64)
+    DataUploaded(u64),
 }
 
 struct WorkerInfo {
@@ -112,7 +114,7 @@ struct WorkerInfo {
 
 pub struct TimeStamp {
     pub time: Instant,
-    pub pieces_n: u32
+    pub pieces_n: u32,
 }
 struct TorrentDownload {
     status: DownloadStatus,
@@ -123,7 +125,7 @@ struct TorrentDownload {
     last_timestamp: Option<TimeStamp>,
     download_speed: Option<u16>,
     save_dir: String,
-    uploaded: u32
+    uploaded: u32,
 }
 
 pub struct MyApp {
@@ -137,8 +139,8 @@ pub struct MyApp {
     torrent_to_delete: Option<usize>,
     zoom: f32,
     peer_id: String,
+    is_dark_theme: bool,
 }
-
 
 impl Default for MyApp {
     fn default() -> Self {
@@ -154,35 +156,38 @@ impl Default for MyApp {
             torrent_to_delete: None,
             zoom: 1.0,
             peer_id: Alphanumeric.sample_string(&mut rand::thread_rng(), 20),
+            is_dark_theme: true,
         }
     }
 }
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // ctx.set_visuals(Visuals::light());
+        ctx.set_visuals(if self.is_dark_theme {
+            Visuals::dark()
+        } else {
+            Visuals::light()
+        });
         self.handle_keys(ctx);
         ctx.set_zoom_factor(self.zoom);
-        
+
         if !self.inited {
             self.init(ctx);
         }
-        
+
         if self.import_opened {
-            self.import_window(ctx);            
+            self.import_window(ctx);
         }
 
         self.torrent_updates(ctx);
 
         self.show_message(ctx);
-        
+
         self.top_panel(ctx);
         self.bottom_panel(ctx);
         self.cenral_panel(ctx);
-        
     }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-
         for q_torrent in &self.torrents {
             match &q_torrent.status {
                 DownloadStatus::Downloading => {
@@ -194,7 +199,7 @@ impl eframe::App for MyApp {
                 }
                 DownloadStatus::Paused => {
                     // Data is already backed up
-                },
+                }
                 status => {
                     async_std::task::block_on(Backup::global().backup_torrent(TorrentBackupInfo {
                         pieces_tasks: VecDeque::new(),
@@ -209,14 +214,14 @@ impl eframe::App for MyApp {
             }
         }
 
-        let app_data = std::mem::take(self); 
+        let app_data = std::mem::take(self);
         for q_torrent in app_data.torrents {
             match q_torrent.status {
                 DownloadStatus::Downloading => {
                     if let Some(info) = q_torrent.worker_info {
                         async_std::task::block_on(info.handle).unwrap();
                     }
-                }, 
+                }
                 _ => {}
             }
         }
@@ -240,7 +245,7 @@ impl MyApp {
                         save_dir: backup.save_path.clone(),
                         last_timestamp: None,
                         download_speed: None,
-                        uploaded: 0
+                        uploaded: 0,
                     });
                     log!(LogLevel::Info, "done: {}", backup.pieces_done);
                     if let DownloadStatus::Downloading = backup.status {
@@ -265,7 +270,9 @@ impl MyApp {
             if input.key_pressed(egui::Key::Plus) {
                 self.zoom += 0.1;
             } else if input.key_pressed(egui::Key::Minus) {
-                self.zoom -= 0.1;
+                if self.zoom > 0.1 {
+                    self.zoom -= 0.1;
+                }
             }
         }
     }
