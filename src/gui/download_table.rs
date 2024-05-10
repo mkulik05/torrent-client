@@ -125,7 +125,9 @@ impl MyApp {
                                 if let Some(speed) = self.torrents[row_i].download_speed {
                                     if speed != 0 {
                                         let pieces_left = self.torrents[row_i].torrent.info.piece_hashes.len() - self.torrents[row_i].pieces_done as usize;
-                                        let left_secs = pieces_left as f64 / speed as f64 * 1_000.0;
+                                        let left_secs = pieces_left as f64 / (1.0
+                                        / (speed
+                                            as f64) * 1_000.0);
                                         ui.label(format_duration(left_secs.ceil() as u64));
                                     } else {
                                         ui.label("∞"); 
