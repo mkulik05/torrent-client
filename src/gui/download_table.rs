@@ -4,9 +4,9 @@ use egui::Color32;
 use egui_extras::{Column, TableBuilder};
 
 use super::format_duration;
+
 impl MyApp {
     pub fn draw_table(&mut self, ui: &mut Ui, ctx: &egui::Context) {
-        let width = ui.available_width();
         let mut table = TableBuilder::new(ui)
             .striped(true)
             .resizable(true)
@@ -67,10 +67,10 @@ impl MyApp {
                         row.col(|ui| {
                             let progress_bar = {
                                 match self.torrents[row_i].status {
-                                    DownloadStatus::Downloading => {
+                                    DownloadStatus::Downloading | DownloadStatus::Resuming => {
                                         let progress = self.torrents[row_i].pieces_done as f32
                                             / self.torrents[row_i].torrent.info.piece_hashes.len()
-                                                as f32;
+                                            as f32;
                                         egui::ProgressBar::new(progress)
                                             .text(format!("{:.2}%", progress * 100.0))
                                     }
@@ -80,7 +80,7 @@ impl MyApp {
                                     _ => {
                                         let progress = self.torrents[row_i].pieces_done as f32
                                             / self.torrents[row_i].torrent.info.piece_hashes.len()
-                                                as f32;
+                                            as f32;
                                         egui::ProgressBar::new(progress)
                                             .text(format!("{:.2}%", progress * 100.0))
                                             .fill(Color32::GRAY)
@@ -99,42 +99,41 @@ impl MyApp {
                             ui.label(size);
                         });
                         row.col(|ui| {
-                            if let DownloadStatus::Downloading  = self.torrents[row_i].status {
+                            if let DownloadStatus::Downloading = self.torrents[row_i].status {
                                 if let Some(speed) = self.torrents[row_i].download_speed {
                                     if speed != 0 {
                                         ui.label(
                                             get_readable_size(
                                                 self.torrents[row_i].torrent.info.piece_length as usize
                                                     / (speed
-                                                        as usize) * 1_000,
+                                                    as usize) * 1_000,
                                                 2,
                                             ) + "/s",
                                         );
                                     } else {
-                                        ui.label("0"); 
+                                        ui.label("0");
                                     }
                                 } else {
-                                    ui.label("0"); 
+                                    ui.label("0");
                                 }
                             } else {
-                               ui.label("0"); 
+                                ui.label("0");
                             }
                         });
                         row.col(|ui| {
-                            if let DownloadStatus::Downloading  = self.torrents[row_i].status {
+                            if let DownloadStatus::Downloading = self.torrents[row_i].status {
                                 if let Some(speed) = self.torrents[row_i].download_speed {
                                     if speed != 0 {
                                         let pieces_left = self.torrents[row_i].torrent.info.piece_hashes.len() - self.torrents[row_i].pieces_done as usize;
                                         let left_secs = pieces_left as f64 / (1.0
-                                        / (speed
+                                            / (speed
                                             as f64) * 1_000.0);
                                         ui.label(format_duration(left_secs.ceil() as u64));
                                     } else {
-                                        ui.label("∞"); 
+                                        ui.label("∞");
                                     }
-
                                 } else {
-                                    ui.label("∞"); 
+                                    ui.label("∞");
                                 }
                             } else {
                                 ui.label("∞");
@@ -163,7 +162,7 @@ impl MyApp {
                             // self.context_selected_row = Some(row_index);
 
                             let enabled = if let DownloadStatus::Finished
-                            | DownloadStatus::Downloading =
+                            | DownloadStatus::Downloading | DownloadStatus::Resuming =
                                 self.torrents[row_i].status
                             {
                                 false

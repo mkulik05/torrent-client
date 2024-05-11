@@ -53,6 +53,7 @@ pub fn start_gui() -> anyhow::Result<()> {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum DownloadStatus {
+    Resuming,
     Downloading,
     Paused,
     Finished,
@@ -85,6 +86,8 @@ impl UiHandle {
 
 #[derive(Clone, Debug)]
 pub enum UiMsg {
+    HashCheckFinished,
+
     PeerDiscovered(String),
 
     PeerDisconnect(String),
@@ -116,6 +119,7 @@ pub struct TimeStamp {
     pub time: Instant,
     pub pieces_n: u32,
 }
+
 struct TorrentDownload {
     status: DownloadStatus,
     worker_info: Option<WorkerInfo>,
@@ -190,7 +194,7 @@ impl eframe::App for MyApp {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         for q_torrent in &self.torrents {
             match &q_torrent.status {
-                DownloadStatus::Downloading => {
+                DownloadStatus::Downloading | DownloadStatus::Resuming => {
                     if let Some(info) = &q_torrent.worker_info {
                         info.sender
                             .send(UiMsg::Stop(q_torrent.pieces_done as u16))
@@ -209,7 +213,7 @@ impl eframe::App for MyApp {
                         pieces_done: q_torrent.pieces_done as usize,
                         status: status.clone(),
                     }))
-                    .unwrap();
+                        .unwrap();
                 }
             }
         }
@@ -217,7 +221,8 @@ impl eframe::App for MyApp {
         let app_data = std::mem::take(self);
         for q_torrent in app_data.torrents {
             match q_torrent.status {
-                DownloadStatus::Downloading => {
+                // todo???
+                DownloadStatus::Downloading | DownloadStatus::Resuming => {
                     if let Some(info) = q_torrent.worker_info {
                         async_std::task::block_on(info.handle).unwrap();
                     }

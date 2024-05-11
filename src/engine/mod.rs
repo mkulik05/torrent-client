@@ -16,8 +16,8 @@ use tracker::TrackerReq;
 
 use self::download::tasks::CHUNK_SIZE;
 use self::download::DataPiece;
-use crate::logger::{log, LogLevel};
 use crate::engine::torrent::PieceBitmap;
+use crate::logger::{log, LogLevel};
 
 pub mod backup;
 mod bencode;
@@ -66,12 +66,11 @@ pub enum TorrentInfo {
     Backup(TorrentBackupInfo),
 }
 
-
 pub async fn download_torrent(
     torrent_info: TorrentInfo,
     path: &str,
     ui_handle: UiHandle,
-    peer_id: String
+    peer_id: String,
 ) -> anyhow::Result<()> {
     let torrent = match torrent_info {
         TorrentInfo::Torrent(ref torrent) => torrent.clone(),
@@ -114,6 +113,8 @@ pub async fn download_torrent(
         None
     };
 
+    let _ = ui_handle.send_with_update(UiMsg::HashCheckFinished);
+
     let pieces_done_n = if let TorrentInfo::Backup(ref backup) = torrent_info {
         backup.pieces_done
     } else {
@@ -125,7 +126,8 @@ pub async fn download_torrent(
 
     match torrent_info {
         TorrentInfo::Torrent(_) => {
-            pieces_tasks = download::tasks::get_piece_tasks(torrent.clone(), pieces_done.clone().unwrap());
+            pieces_tasks =
+                download::tasks::get_piece_tasks(torrent.clone(), pieces_done.clone().unwrap());
             chunks_tasks = VecDeque::new();
             download::tasks::add_chunks_tasks(
                 &mut pieces_tasks,
@@ -161,7 +163,8 @@ pub async fn download_torrent(
             None
         },
         saver_cancel.clone(),
-    ).await;
+    )
+    .await;
 
     if pieces_tasks.is_empty() && chunks_tasks.is_empty() {
         log!(LogLevel::Info, "Done");
@@ -170,8 +173,6 @@ pub async fn download_torrent(
         }
         return Ok(());
     }
-
-    
 
     let mut bitmap = PieceBitmap::new(torrent.info.piece_hashes.len());
     log!(LogLevel::Debug, "Lalalal {:?}", pieces_done);
@@ -183,7 +184,7 @@ pub async fn download_torrent(
 
     let semaphore = Arc::new(Semaphore::new(50));
     let mut wait_for_channel_msg = false;
-    let mut ui_reader = ui_handle.ui_sender.subscribe();
+    let mut ui_reader = ui_handle.ui_sender.clone().subscribe();
     loop {
         // checking that saver task is alive
         if saver_task.is_finished() {
@@ -271,6 +272,7 @@ pub async fn download_torrent(
                         break;
                     }
                     ref msg @ UiMsg::Stop(done) | ref msg @ UiMsg::Pause(done) => {
+                        log!(LogLevel::Debug, "Shutting down worker");
                         for peer in peers {
                             if let DownloaderPeer::Busy(DownloaderInfo {
                                 handle: Some(handle),

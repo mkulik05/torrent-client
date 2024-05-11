@@ -34,13 +34,13 @@ pub struct SaveInfo {
     pub save_path: String,
     pub torrent: Arc<Torrent>,
     pub size_progression: Option<Vec<u64>>,
-    pub ui_h: UiHandle
+    pub ui_h: UiHandle,
 }
 
 
 pub static SAVE_INFO: OnceCell<RwLock<HashMap<String, SaveInfo>>> = OnceCell::new();
 
-pub fn init_saver_globals () {
+pub fn init_saver_globals() {
     SAVE_INFO.set(RwLock::new(HashMap::new())).expect("Failed to init once_cell");
 }
 
@@ -156,7 +156,7 @@ pub async fn spawn_saver(
         save_path: src_path.clone(),
         torrent: torrent.clone(),
         size_progression: files_lengthes.clone(),
-        ui_h: ui_handle.clone()
+        ui_h: ui_handle.clone(),
     });
 
     // Saver task - save downloaded chunks to disk, verify piece hash,

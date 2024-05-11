@@ -2,6 +2,7 @@ use egui::Ui;
 
 use crate::engine::parse_torrent;
 use crate::gui::{DownloadStatus, MyApp};
+
 impl MyApp {
     pub fn top_panel(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top_panel")
@@ -45,9 +46,9 @@ impl MyApp {
                         if ui.button("Zoom Out").clicked() {
                             if self.zoom > 0.1 {
                                 self.zoom -= 0.1;
-                            } 
+                            }
                         }
-                        if ui.button(format!("{} theme", if self.is_dark_theme {"Light"} else {"Dark"})).clicked() {
+                        if ui.button(format!("{} theme", if self.is_dark_theme { "Light" } else { "Dark" })).clicked() {
                             self.is_dark_theme = !self.is_dark_theme;
                         }
                     });
@@ -61,7 +62,8 @@ impl MyApp {
                         if ui.button("Pause All").clicked() {
                             let mut torrents_to_pause = Vec::new();
                             for (i, entry) in self.torrents.iter().enumerate() {
-                                if let DownloadStatus::Downloading = entry.status {
+                                // todo???
+                                if let DownloadStatus::Downloading | DownloadStatus::Resuming = entry.status {
                                     torrents_to_pause.push(i);
                                 }
                             }
@@ -88,7 +90,7 @@ impl MyApp {
         ui.set_enabled(self.selected_row.is_some());
 
         if ui.button("Pause").clicked() {
-            if let DownloadStatus::Downloading | DownloadStatus::Error(_) =
+            if let DownloadStatus::Downloading | DownloadStatus::Resuming | DownloadStatus::Error(_) =
                 self.torrents[self.selected_row.unwrap()].status
             {
                 self.pause_torrent(self.selected_row.unwrap());

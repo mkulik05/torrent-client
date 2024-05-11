@@ -77,7 +77,7 @@ impl MyApp {
             self.torrents.push(TorrentDownload {
                 peers: Vec::new(),
                 torrent,
-                status: DownloadStatus::Downloading,
+                status: DownloadStatus::Resuming,
                 worker_info: Some(info),
                 pieces_done: 0,
                 download_speed: None,
@@ -89,6 +89,7 @@ impl MyApp {
             let i = torrent_i.unwrap();
             self.torrents[i].worker_info = Some(info);
             self.torrents[i].last_timestamp = timestamp;
+            self.torrents[i].status = DownloadStatus::Resuming;
         }
     }
     pub fn pause_torrent(&mut self, i: usize) {
@@ -117,10 +118,13 @@ impl MyApp {
                 self.start_download(TorrentInfo::Backup(backup), ctx);
             }
             Err(_) => {
+                self.torrents[i].download_speed = None;
+                self.torrents[i].pieces_done = 0;
+                self.torrents[i].last_timestamp = None;
                 self.start_download(TorrentInfo::Torrent(self.torrents[i].torrent.clone()), ctx);
             }
         }
-        self.torrents[i].status = DownloadStatus::Downloading;
+        self.torrents[i].status = DownloadStatus::Resuming;
     }
 
     pub fn delete_torrent(&mut self, i: usize) {
@@ -149,7 +153,9 @@ impl MyApp {
                 continue;
             }
 
-            if let DownloadStatus::Downloading = self.torrents[t_i].status {
+            if let DownloadStatus::Downloading | DownloadStatus::Resuming =
+                self.torrents[t_i].status
+            {
                 let mut done_piece = false;
                 while let Ok(msg) = self.torrents[t_i]
                     .worker_info
@@ -158,6 +164,26 @@ impl MyApp {
                     .receiver
                     .try_recv()
                 {
+                    if let DownloadStatus::Resuming = self.torrents[t_i].status {
+                        match msg {
+                            UiMsg::PieceDone(_) => {
+                                self.torrents[t_i].pieces_done += 1;
+                                continue;
+                            }
+                            UiMsg::HashCheckFinished => {
+                                self.torrents[t_i].status = DownloadStatus::Downloading;
+                            }
+                            _ => {
+                                let _ = self.torrents[t_i]
+                                    .worker_info
+                                    .as_ref()
+                                    .unwrap()
+                                    .sender
+                                    .send(msg);
+                                continue;
+                            }
+                        }
+                    }
                     match msg {
                         UiMsg::PieceDone(_) => {
                             done_piece = true;
@@ -175,8 +201,10 @@ impl MyApp {
                                     let time_per_piece = info.time.elapsed().as_millis()
                                         / PIECES_TO_TIME_MEASURE as u128;
                                     if self.torrents[t_i].download_speed.is_none() {
-                                        self.torrents[t_i].download_speed =
-                                            Some(time_per_piece as u16);
+                                        if time_per_piece != 0 {
+                                            self.torrents[t_i].download_speed =
+                                                Some(time_per_piece as u16);
+                                        }
                                         continue;
                                     }
                                     log!(
@@ -203,7 +231,11 @@ impl MyApp {
                                         time: Instant::now(),
                                         pieces_n: self.torrents[t_i].pieces_done,
                                     });
-                                    self.torrents[t_i].download_speed = Some(time_per_piece as u16);
+                                    self.torrents[t_i].download_speed = if time_per_piece != 0 {
+                                        Some(time_per_piece as u16)
+                                    } else {
+                                        None
+                                    };
                                 }
                             } else {
                                 self.torrents[t_i].last_timestamp = Some(TimeStamp {
