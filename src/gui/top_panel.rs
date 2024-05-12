@@ -59,10 +59,10 @@ impl MyApp {
                     self.torrent_actions(ui, ctx);
                     ui.separator();
                     ui.horizontal(|ui| {
+                        ui.set_enabled(!self.torrents.is_empty());
                         if ui.button("Pause All").clicked() {
                             let mut torrents_to_pause = Vec::new();
                             for (i, entry) in self.torrents.iter().enumerate() {
-                                // todo???
                                 if let DownloadStatus::Downloading | DownloadStatus::Resuming = entry.status {
                                     torrents_to_pause.push(i);
                                 }
@@ -87,23 +87,23 @@ impl MyApp {
             });
     }
     fn torrent_actions(&mut self, ui: &mut Ui, ctx: &egui::Context) {
-        ui.set_enabled(self.selected_row.is_some());
-
-        if ui.button("Pause").clicked() {
+        let enabled = self.selected_row.is_some();
+        
+        if ui.add_enabled(enabled, egui::Button::new("Pause")).clicked() {
             if let DownloadStatus::Downloading | DownloadStatus::Resuming | DownloadStatus::Error(_) =
                 self.torrents[self.selected_row.unwrap()].status
             {
                 self.pause_torrent(self.selected_row.unwrap());
             }
         }
-        if ui.button("Resume").clicked() {
+        if ui.add_enabled(enabled, egui::Button::new("Resume")).clicked() {
             if let DownloadStatus::Paused | DownloadStatus::Error(_) =
                 self.torrents[self.selected_row.unwrap()].status
             {
                 self.resume_torrent(self.selected_row.unwrap(), ctx);
             }
         }
-        if ui.button("Delete").clicked() {
+        if ui.add_enabled(enabled, egui::Button::new("Delete")).clicked() {
             self.delete_torrent(self.selected_row.unwrap());
         }
     }
