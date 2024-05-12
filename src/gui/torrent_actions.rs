@@ -167,10 +167,17 @@ impl MyApp {
                         match msg {
                             UiMsg::PieceDone(_) => {
                                 self.torrents[t_i].pieces_done += 1;
+                                
                                 continue;
                             }
                             UiMsg::HashCheckFinished => {
                                 self.torrents[t_i].status = DownloadStatus::Downloading;
+                            },
+                            UiMsg::TorrentFinished => {
+                                self.torrents[t_i].peers.clear();
+                                self.torrents[t_i].status = DownloadStatus::Finished;
+                                self.torrents[t_i].pieces_done =
+                                    self.torrents[t_i].torrent.info.piece_hashes.len() as u32;
                             }
                             _ => {
                                 let _ = self.torrents[t_i]

@@ -172,6 +172,7 @@ pub async fn download_torrent(
         for handle in peer_discovery_handles {
             handle.abort();
         }
+        ui_handle.send_with_update(UiMsg::TorrentFinished).unwrap();
         return Ok(());
     }
 
@@ -535,6 +536,7 @@ pub async fn download_torrent(
             continue;
         }
     }
+
     for handle in peer_discovery_handles {
         handle.abort();
     }
