@@ -213,7 +213,7 @@ impl eframe::App for MyApp {
                         pieces_done: q_torrent.pieces_done as usize,
                         status: status.clone(),
                     }))
-                        .unwrap();
+                    .unwrap();
                 }
             }
         }
@@ -221,7 +221,6 @@ impl eframe::App for MyApp {
         let app_data = std::mem::take(self);
         for q_torrent in app_data.torrents {
             match q_torrent.status {
-                // todo???
                 DownloadStatus::Downloading | DownloadStatus::Resuming => {
                     if let Some(info) = q_torrent.worker_info {
                         async_std::task::block_on(info.handle).unwrap();

@@ -8,12 +8,12 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
+use once_cell::sync::OnceCell;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
+use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
-use once_cell::sync::OnceCell;
-use tokio::sync::RwLock;
 
 use crate::gui::TorrentBackupInfo;
 use crate::gui::{UiHandle, UiMsg};
@@ -37,11 +37,12 @@ pub struct SaveInfo {
     pub ui_h: UiHandle,
 }
 
-
 pub static SAVE_INFO: OnceCell<RwLock<HashMap<String, SaveInfo>>> = OnceCell::new();
 
 pub fn init_saver_globals() {
-    SAVE_INFO.set(RwLock::new(HashMap::new())).expect("Failed to init once_cell");
+    SAVE_INFO
+        .set(RwLock::new(HashMap::new()))
+        .expect("Failed to init once_cell");
 }
 
 impl PieceChunksBitmap {
@@ -152,12 +153,15 @@ pub async fn spawn_saver(
         None
     };
 
-    SAVE_INFO.get().unwrap().write().await.insert(hex::encode(torrent.info_hash.clone()), SaveInfo {
-        save_path: src_path.clone(),
-        torrent: torrent.clone(),
-        size_progression: files_lengthes.clone(),
-        ui_h: ui_handle.clone(),
-    });
+    SAVE_INFO.get().unwrap().write().await.insert(
+        hex::encode(torrent.info_hash.clone()),
+        SaveInfo {
+            save_path: src_path.clone(),
+            torrent: torrent.clone(),
+            size_progression: files_lengthes.clone(),
+            ui_h: ui_handle.clone(),
+        },
+    );
 
     // Saver task - save downloaded chunks to disk, verify piece hash,
     // notify about finishing donwload
@@ -342,7 +346,12 @@ pub async fn spawn_saver(
                         }
             }
         }
-        SAVE_INFO.get().unwrap().write().await.remove(&hex::encode(torrent.info_hash.clone()));
+        SAVE_INFO
+            .get()
+            .unwrap()
+            .write()
+            .await
+            .remove(&hex::encode(torrent.info_hash.clone()));
         Ok(())
     })
 }
@@ -483,6 +492,7 @@ pub async fn find_downloaded_pieces(
     src_path: &str,
     ui_handle: UiHandle,
 ) -> Vec<usize> {
+    let mut ui_receiver = ui_handle.ui_sender.subscribe();
     let mut downloaded_pieces = Vec::new();
     let mut pieces_processed = 0;
     let mut pieces_done = 0;
@@ -549,6 +559,9 @@ pub async fn find_downloaded_pieces(
             let mut file = File::options().read(true).open(src_path).unwrap();
 
             for i in 0..pieces_i {
+                if let Ok(UiMsg::Pause(_) | UiMsg::Stop(_)) = ui_receiver.try_recv() {
+                    return Vec::new();
+                }
                 let piece_length = torrent.get_piece_length(i);
                 let mut piece_buf = vec![0; piece_length as usize];
                 let read_res = file.read_exact(&mut piece_buf);
@@ -588,6 +601,9 @@ pub async fn find_downloaded_pieces(
         }
 
         while pieces_done < pieces_processed {
+            if let Ok(UiMsg::Pause(_) | UiMsg::Stop(_)) = ui_receiver.try_recv() {
+                break;
+            }
             if let Ok(Some((i, have))) =
                 timeout(std::time::Duration::from_secs(10), receiver.recv()).await
             {

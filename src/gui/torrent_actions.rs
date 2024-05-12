@@ -113,18 +113,17 @@ impl MyApp {
         let backup = async_std::task::block_on(
             Backup::global().load_backup(&self.torrents[i].torrent.info_hash),
         );
-        match backup {
-            Ok(backup) => {
+        self.torrents[i].status = DownloadStatus::Resuming;
+        self.torrents[i].download_speed = None;
+        self.torrents[i].last_timestamp = None;
+        if let Ok(backup) = backup {
+            if backup.pieces_done != 0 {
                 self.start_download(TorrentInfo::Backup(backup), ctx);
-            }
-            Err(_) => {
-                self.torrents[i].download_speed = None;
-                self.torrents[i].pieces_done = 0;
-                self.torrents[i].last_timestamp = None;
-                self.start_download(TorrentInfo::Torrent(self.torrents[i].torrent.clone()), ctx);
+                return;
             }
         }
-        self.torrents[i].status = DownloadStatus::Resuming;
+        self.torrents[i].pieces_done = 0;
+        self.start_download(TorrentInfo::Torrent(self.torrents[i].torrent.clone()), ctx);
     }
 
     pub fn delete_torrent(&mut self, i: usize) {

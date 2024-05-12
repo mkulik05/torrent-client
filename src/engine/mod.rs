@@ -72,6 +72,8 @@ pub async fn download_torrent(
     ui_handle: UiHandle,
     peer_id: String,
 ) -> anyhow::Result<()> {
+    let mut ui_reader = ui_handle.ui_sender.clone().subscribe();
+
     let torrent = match torrent_info {
         TorrentInfo::Torrent(ref torrent) => torrent.clone(),
         TorrentInfo::Backup(ref backup) => backup.torrent.clone(),
@@ -112,7 +114,6 @@ pub async fn download_torrent(
     } else {
         None
     };
-
     let _ = ui_handle.send_with_update(UiMsg::HashCheckFinished);
 
     let pieces_done_n = if let TorrentInfo::Backup(ref backup) = torrent_info {
@@ -182,9 +183,42 @@ pub async fn download_torrent(
         }
     }
 
+    while let Ok(msg) = ui_reader.try_recv() {
+        match msg {
+            UiMsg::ForceOff => {
+                log!(LogLevel::Debug, "Gor off msg, shutting down..");
+                saver_cancel.cancel();
+                let _ = saver_task.await;
+                log!(LogLevel::Info, "Saver finished");
+                return Ok(());
+            }
+            ref msg @ UiMsg::Stop(done) | ref msg @ UiMsg::Pause(done) => {
+                log!(LogLevel::Debug, "Gor pause msg, shutting down..");
+                Backup::global()
+                    .backup_torrent(TorrentBackupInfo {
+                        pieces_tasks,
+                        chunks_tasks,
+                        torrent: Arc::as_ref(&torrent).clone(),
+                        save_path: save_path.to_string(),
+                        pieces_done: 0,
+                        status: if let UiMsg::Pause(_) = msg {
+                            DownloadStatus::Paused
+                        } else {
+                            DownloadStatus::Downloading
+                        },
+                    })
+                    .await?;
+                saver_cancel.cancel();
+                let _ = saver_task.await;
+                log!(LogLevel::Info, "Saver finished");
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+
     let semaphore = Arc::new(Semaphore::new(50));
     let mut wait_for_channel_msg = false;
-    let mut ui_reader = ui_handle.ui_sender.clone().subscribe();
     loop {
         // checking that saver task is alive
         if saver_task.is_finished() {
