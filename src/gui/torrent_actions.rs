@@ -148,7 +148,13 @@ impl MyApp {
     }
     pub fn torrent_updates(&mut self, ctx: &egui::Context) {
         for t_i in 0..self.torrents.len() {
-            if self.torrents[t_i].worker_info.is_none() {
+            if let Some(t_info) = &self.torrents[t_i].worker_info {
+                if t_info.handle.is_finished() {
+                    self.torrents[t_i].pieces_done = self.torrents[t_i].torrent.info.piece_hashes.len() as u32;
+                    self.torrents[t_i].status = DownloadStatus::Finished;
+                    self.torrents[t_i].peers.clear();
+                }
+            } else {
                 continue;
             }
 
@@ -254,6 +260,7 @@ impl MyApp {
                                 == self.torrents[t_i].torrent.info.piece_hashes.len() as u32
                             {
                                 self.torrents[t_i].status = DownloadStatus::Finished;
+                                self.torrents[t_i].peers.clear();
                             }
                         }
                         UiMsg::DataUploaded(n) => {
