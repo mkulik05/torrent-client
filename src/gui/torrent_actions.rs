@@ -69,10 +69,6 @@ impl MyApp {
             .iter()
             .position(|x| x.torrent.info_hash == torrent.info_hash);
 
-        let timestamp = Some(TimeStamp {
-            time: Instant::now(),
-            pieces_n: 0,
-        });
         if torrent_i.is_none() {
             self.torrents.push(TorrentDownload {
                 peers: Vec::new(),
@@ -82,13 +78,13 @@ impl MyApp {
                 pieces_done: 0,
                 download_speed: None,
                 save_dir: folder,
-                last_timestamp: timestamp,
+                last_timestamp: None,
                 uploaded: 0,
             });
         } else {
             let i = torrent_i.unwrap();
             self.torrents[i].worker_info = Some(info);
-            self.torrents[i].last_timestamp = timestamp;
+            self.torrents[i].last_timestamp = None;
             self.torrents[i].status = DownloadStatus::Resuming;
         }
     }
@@ -96,23 +92,26 @@ impl MyApp {
         self.torrents[i].peers.clear();
         let worker_info = self.torrents[i].worker_info.take();
         if let Some(info) = worker_info {
-            log!(LogLevel::Info, "Sended msg!!!");
+            log!(LogLevel::Info, "Sended pause msg!!!");
             info.sender
                 .send(UiMsg::Pause(self.torrents[i].pieces_done as u16))
                 .unwrap();
-            log!(LogLevel::Info, "Finished: sended msg!!!");
+            log!(LogLevel::Info, "Finished: sended pause msg!!!");
             self.torrents[i].status = DownloadStatus::Paused;
 
             async_std::task::block_on(async move {
                 let _ = info.handle.await;
             });
+            log!(LogLevel::Debug, "Finished block on handle");
         }
     }
 
     pub fn resume_torrent(&mut self, i: usize, ctx: &egui::Context) {
+        log!(LogLevel::Debug, "Resuming torrent");
         let backup = async_std::task::block_on(
             Backup::global().load_backup(&self.torrents[i].torrent.info_hash),
         );
+        log!(LogLevel::Debug, "Backup data loaded successfully");
         self.torrents[i].status = DownloadStatus::Resuming;
         self.torrents[i].download_speed = None;
         self.torrents[i].last_timestamp = None;
@@ -173,11 +172,13 @@ impl MyApp {
                         match msg {
                             UiMsg::PieceDone(_) => {
                                 self.torrents[t_i].pieces_done += 1;
-                                
-                                continue;
                             }
                             UiMsg::HashCheckFinished => {
                                 self.torrents[t_i].status = DownloadStatus::Downloading;
+                                self.torrents[t_i].last_timestamp = Some(TimeStamp {
+                                    time: Instant::now(),
+                                    pieces_n: 0,
+                                });
                             },
                             UiMsg::TorrentFinished => {
                                 self.torrents[t_i].peers.clear();
@@ -192,9 +193,9 @@ impl MyApp {
                                     .unwrap()
                                     .sender
                                     .send(msg);
-                                continue;
                             }
                         }
+                        continue;
                     }
                     match msg {
                         UiMsg::PieceDone(_) => {
@@ -221,7 +222,7 @@ impl MyApp {
                                     }
                                     log!(
                                         LogLevel::Debug,
-                                        "Piece download time is {}ms for torrent {}",
+                                        "Piece download time is {}ms  for torrent {}",
                                         time_per_piece,
                                         self.torrents[t_i].torrent.info.name
                                     );
@@ -235,6 +236,7 @@ impl MyApp {
                                         / self.torrents[t_i].download_speed.unwrap() as f64
                                         >= 3.0
                                     {
+                                        log!(LogLevel::Debug, "Restart by speed slow down");
                                         self.pause_torrent(t_i);
                                         self.resume_torrent(t_i, ctx)
                                     }
@@ -301,9 +303,11 @@ impl MyApp {
                         let piece_time =
                             info.time.elapsed().as_millis() / PIECES_TO_TIME_MEASURE as u128;
 
-                        if info.time.elapsed().as_millis() > 30_000
-                            && piece_time >= self.torrents[t_i].download_speed.unwrap_or(0) as u128
+                        
+                        if info.time.elapsed().as_millis() > 30_000 
+                            && piece_time as f64 >= self.torrents[t_i].download_speed.unwrap_or(0) as f64 * 1.35
                         {
+                            log!(LogLevel::Debug, "Restart by 30s timeout");
                             self.pause_torrent(t_i);
                             self.resume_torrent(t_i, ctx)
                         }

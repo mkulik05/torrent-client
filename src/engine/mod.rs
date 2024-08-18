@@ -233,7 +233,6 @@ pub async fn download_torrent(
         // if none appeared, searching for peers again
         let download_status = if wait_for_channel_msg {
             let output;
-            log!(LogLevel::Debug, "Before select");
             let time = tokio::time::sleep(Duration::from_secs(20));
             tokio::select! {
                 _ = time => {
@@ -242,7 +241,6 @@ pub async fn download_torrent(
                     continue;
                 }
                 res = get_status.recv() => {
-                    log!(LogLevel::Debug, "Got result: {:?}", res);
                     output = res;
                 }
                 msg @ Ok(UiMsg::ForceOff | UiMsg::Pause(_) | UiMsg::Stop(_)) = ui_reader.recv() => {
@@ -315,9 +313,8 @@ pub async fn download_torrent(
                                 ..
                             }) = peer
                             {
-                                log!(LogLevel::Fatal, "Returned chunk 22 task: {:?}", task);
+                                log!(LogLevel::Fatal, "Returned chunk task: {:?}", task);
                                 chunks_tasks.push_front(task);
-                                log!(LogLevel::Fatal, "{:?}", handle);
                                 handle.abort();
                             }
                         }

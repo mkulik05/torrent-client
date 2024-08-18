@@ -539,7 +539,7 @@ pub async fn find_downloaded_pieces(
                         if hash == torrent.info.piece_hashes[i] {
                             sender.try_send((i, true)).unwrap();
                             if let Err(e) = ui_handle.send_with_update(UiMsg::PieceDone(i as u16)) {
-                                log!(LogLevel::Error, "Failed to PieceDone msg");
+                                log!(LogLevel::Error, "Failed to send PieceDone msg");
                             }
                             log!(LogLevel::Info, "Piece {} is already downloaded", i);
                         } else {

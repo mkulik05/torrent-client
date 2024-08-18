@@ -174,7 +174,6 @@ impl Peer {
             } else {
                 msg = self.receive_message().await?;
             }
-            log!(LogLevel::Debug, "Got peer message: {}", msg);
             let msg_str = msg.to_string();
             match msg {
                 PeerMessage::Bitfield(buf) => self.peer_bitfield = Some(buf),
@@ -351,7 +350,6 @@ impl Peer {
         if data_len == 0 {
             return Ok(PeerMessage::KeepAlive);
         }
-        log!(LogLevel::Debug, "Received peer msg {}", data[4]);
         match data[4] {
             0 => Ok(PeerMessage::Choke),
             1 => Ok(PeerMessage::Unchoke),
